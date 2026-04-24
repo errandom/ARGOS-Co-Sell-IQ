@@ -1,23 +1,24 @@
-# ✨ Welcome to Your Spark Template!
-You've just launched your brand-new Spark Template Codespace — everything’s fired up and ready for you to explore, build, and create with Spark!
+# ARGOS Co-Sell IQ
 
-This template is your blank canvas. It comes with a minimal setup to help you get started quickly with Spark development.
+ARGOS Co-Sell IQ is a React application that authenticates users with Azure Active Directory and loads co-sell data from Microsoft Fabric SQL through a backend API.
 
-🚀 What's Inside?
-- A clean, minimal Spark environment
-- Pre-configured for local development
-- Ready to scale with your ideas
-  
-🧠 What Can You Do?
+## Authoritative Documentation
 
-Right now, this is just a starting point — the perfect place to begin building and testing your Spark applications.
+Use these files as the single source of truth:
 
-🧹 Just Exploring?
-No problem! If you were just checking things out and don’t need to keep this code:
+- `FABRIC_SETUP.md`: End-to-end setup (Azure AD, backend API, schema mapping, troubleshooting)
+- `QUICK_START.md`: Fast local setup checklist
+- `MSX_SCHEMA_REFERENCE.md`: Shared Fabric table and column reference
 
-- Simply delete your Spark.
-- Everything will be cleaned up — no traces left behind.
+## Important Notes
 
-📄 License For Spark Template Resources 
+- The Fabric tables already exist and are treated as a read-only source.
+- The app does not create tables and should not run DDL in Fabric.
+- Backend queries should read from the `dbo.MSX_*` tables you shared.
 
-The Spark Template files and resources from GitHub are licensed under the terms of the MIT license, Copyright GitHub, Inc.
+## Local Run
+
+1. Start backend: `node server.js`
+2. Start frontend: `npm run dev`
+3. Sign in via Azure AD
+4. Verify `POST /api/fabric/data` in browser network tools

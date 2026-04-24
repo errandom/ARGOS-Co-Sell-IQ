@@ -120,12 +120,9 @@ Run backend:
 node server.js
 ```
 
-If you want the MSX-schema query version already prepared in this workspace:
-
-```bash
-cp server-updated.js server.js
-node server.js
-```
+Note:
+- `server.js` should be your active backend entrypoint for this project.
+- It should query existing `dbo.MSX_*` tables in read-only mode.
 
 ## 6. Real Fabric Schema Mapping Used
 

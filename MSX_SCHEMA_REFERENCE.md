@@ -291,16 +291,17 @@ ORDER BY [Partner Account Name]
 
 ```sql
 -- Find users in the system
-SELECT DISTINCT 
-  [ID_owner]
-FROM dbo.MSX_accounts
-WHERE [ID_owner] IS NOT NULL
-UNION
-SELECT DISTINCT 
-  [ID_owner]
-FROM dbo.MSX_opportunities
-WHERE [ID_owner] IS NOT NULL
-LIMIT 10
+SELECT TOP 10 [ID_owner]
+FROM (
+  SELECT DISTINCT [ID_owner]
+  FROM dbo.MSX_accounts
+  WHERE [ID_owner] IS NOT NULL
+  UNION
+  SELECT DISTINCT [ID_owner]
+  FROM dbo.MSX_opportunities
+  WHERE [ID_owner] IS NOT NULL
+) u
+ORDER BY [ID_owner]
 ```
 
 ### Test Each Query
