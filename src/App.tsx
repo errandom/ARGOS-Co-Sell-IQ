@@ -8,10 +8,12 @@ import { DetectionsView } from '@/components/Detections'
 import { PipelineView } from '@/components/Pipeline'
 import { ScanningOverlay } from '@/components/ScanningOverlay'
 import { generateDetections, generatePipelineData } from '@/lib/mockData'
-import type { User, ScanSettings, Detection } from '@/types'
+import { useFabricData } from '@/hooks/useFabricData'
+import type { User, ScanSettings, Detection, FabricData } from '@/types'
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [userId, setUserId] = useState<string | undefined>(undefined)
   const [currentView, setCurrentView] = useState('dashboard')
   const [hasScanRun, setHasScanRun] = useState(false)
   const [isScanning, setIsScanning] = useState(false)
@@ -21,6 +23,9 @@ function App() {
     alias: 'kennethf',
     role: 'Enterprise Seller',
   })
+
+  // Fetch Fabric data when user authenticates
+  const { data: fabricData, isLoading: fabricDataLoading, error: fabricError } = useFabricData(userId)
 
   const [scanSettings, setScanSettings] = useState<ScanSettings>({
     sources: { email: true, chat: true, meetings: true },
@@ -34,6 +39,24 @@ function App() {
   const [detections, setDetections] = useState<Detection[]>([])
   const [pipelineData] = useState(generatePipelineData())
 
+  // Handle Fabric data loading errors
+  useEffect(() => {
+    if (fabricError) {
+      console.error('Error loading Fabric data:', fabricError)
+      // You can show a toast notification here if needed
+    }
+  }, [fabricError])
+
+  // Auto-populate selected accounts from Fabric data
+  useEffect(() => {
+    if (fabricData?.accounts && fabricData.accounts.length > 0) {
+      setScanSettings((prev) => ({
+        ...prev,
+        selectedAccounts: fabricData.accounts.slice(0, 5).map((acc) => acc.accountName),
+      }))
+    }
+  }, [fabricData?.accounts])
+
   useEffect(() => {
     const root = document.documentElement
     if (scanSettings.theme === 'bright') {
@@ -44,12 +67,16 @@ function App() {
   }, [scanSettings.theme])
 
   const handleSignIn = () => {
+    // In a real app, this would be the authenticated user's ID from your auth provider
+    const authenticatedUserId = 'user-' + Date.now() // Generate a unique ID for demo
+    setUserId(authenticatedUserId)
     setIsAuthenticated(true)
     setCurrentView('dashboard')
   }
 
   const handleSignOut = () => {
     setIsAuthenticated(false)
+    setUserId(undefined)
     setCurrentView('dashboard')
     setHasScanRun(false)
     setDetections([])
