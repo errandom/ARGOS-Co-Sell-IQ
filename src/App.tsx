@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { useIsAuthenticated, useMsal } from '@azure/msal-react'
 import { Toaster } from 'sonner'
 import { LandingPage } from '@/components/LandingPage'
 import { Navigation } from '@/components/Navigation'
@@ -10,25 +10,25 @@ import { PipelineView } from '@/components/Pipeline'
 import { ScanningOverlay } from '@/components/ScanningOverlay'
 import { generateDetections, generatePipelineData } from '@/lib/mockData'
 import { useFabricData } from '@/hooks/useFabricData'
-import type { User, ScanSettings, Detection, FabricData } from '@/types'
-
-const queryClient = new QueryClient()
+import { apiScope, loginRequest } from '@/lib/authConfig'
+import type { User, ScanSettings, Detection } from '@/types'
 
 function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false)
-  const [userId, setUserId] = useState<string | undefined>(undefined)
+  const { instance, accounts, inProgress } = useMsal()
+  const isAuthenticated = useIsAuthenticated()
   const [currentView, setCurrentView] = useState('dashboard')
   const [hasScanRun, setHasScanRun] = useState(false)
   const [isScanning, setIsScanning] = useState(false)
+  const [userId, setUserId] = useState<string | undefined>(undefined)
 
-  const [user] = useState<User>({
+  const [user, setUser] = useState<User>({
     name: 'Kenneth Fischer',
     alias: 'kennethf',
     role: 'Enterprise Seller',
   })
 
   // Fetch Fabric data when user authenticates
-  const { data: fabricData, isLoading: fabricDataLoading, error: fabricError } = useFabricData(userId)
+  const { data: fabricData, error: fabricError } = useFabricData(userId)
 
   const [scanSettings, setScanSettings] = useState<ScanSettings>({
     sources: { email: true, chat: true, meetings: true },
@@ -41,6 +41,43 @@ function App() {
 
   const [detections, setDetections] = useState<Detection[]>([])
   const [pipelineData] = useState(generatePipelineData())
+
+  useEffect(() => {
+    const activeAccount = instance.getActiveAccount() || accounts[0]
+    if (!activeAccount || !isAuthenticated) {
+      setUserId(undefined)
+      return
+    }
+
+    const accountName = activeAccount.name || activeAccount.username || 'Authenticated User'
+    const alias = (activeAccount.username || accountName).split('@')[0] || 'user'
+
+    setUserId(activeAccount.homeAccountId)
+    setUser({
+      name: accountName,
+      alias,
+      role: 'Enterprise Seller',
+    })
+  }, [accounts, instance, isAuthenticated])
+
+  useEffect(() => {
+    const activeAccount = instance.getActiveAccount() || accounts[0]
+    if (!activeAccount || !isAuthenticated) return
+
+    const scopes = apiScope ? [apiScope] : ['User.Read']
+    instance
+      .acquireTokenSilent({
+        account: activeAccount,
+        scopes,
+      })
+      .then((result) => {
+        localStorage.setItem('authToken', result.accessToken)
+      })
+      .catch((error) => {
+        console.warn('Token acquisition failed. Falling back to account token marker.', error)
+        localStorage.setItem('authToken', activeAccount.homeAccountId)
+      })
+  }, [accounts, instance, isAuthenticated])
 
   // Handle Fabric data loading errors
   useEffect(() => {
@@ -55,7 +92,10 @@ function App() {
     if (fabricData?.accounts && fabricData.accounts.length > 0) {
       setScanSettings((prev) => ({
         ...prev,
-        selectedAccounts: fabricData.accounts.slice(0, 5).map((acc) => acc.accountName),
+        selectedAccounts: fabricData.accounts
+          .slice(0, 5)
+          .map((acc) => (acc['MSX Account'] as string) || (acc.ID_account as string))
+          .filter(Boolean),
       }))
     }
   }, [fabricData?.accounts])
@@ -69,20 +109,18 @@ function App() {
     }
   }, [scanSettings.theme])
 
-  const handleSignIn = () => {
-    // In a real app, this would be the authenticated user's ID from your auth provider
-    const authenticatedUserId = 'user-' + Date.now() // Generate a unique ID for demo
-    setUserId(authenticatedUserId)
-    setIsAuthenticated(true)
+  const handleSignIn = async () => {
+    await instance.loginRedirect(loginRequest)
     setCurrentView('dashboard')
   }
 
-  const handleSignOut = () => {
-    setIsAuthenticated(false)
+  const handleSignOut = async () => {
+    localStorage.removeItem('authToken')
     setUserId(undefined)
     setCurrentView('dashboard')
     setHasScanRun(false)
     setDetections([])
+    await instance.logoutRedirect()
   }
 
   const handleNavigate = (view: string) => {
@@ -107,15 +145,15 @@ function App() {
 
   if (!isAuthenticated) {
     return (
-      <QueryClientProvider client={queryClient}>
-        <LandingPage onSignIn={handleSignIn} />
+      <>
+        <LandingPage onSignIn={handleSignIn} authInProgress={inProgress !== 'none'} />
         <Toaster position="bottom-right" theme="dark" />
-      </QueryClientProvider>
+      </>
     )
   }
 
   return (
-    <QueryClientProvider client={queryClient}>
+    <>
       <div className="min-h-screen bg-background font-sans">
         <Navigation
           user={user}
@@ -150,7 +188,7 @@ function App() {
 
       {isScanning && <ScanningOverlay />}
       <Toaster position="bottom-right" theme="dark" />
-    </QueryClientProvider>
+    </>
   )
 }
 

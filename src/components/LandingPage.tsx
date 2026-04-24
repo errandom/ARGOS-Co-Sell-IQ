@@ -3,18 +3,20 @@ import { Button } from '@/components/ui/button'
 import { Shield, Loader2 } from 'lucide-react'
 
 interface LandingPageProps {
-  onSignIn: () => void
+  onSignIn: () => Promise<void>
+  authInProgress?: boolean
 }
 
-export function LandingPage({ onSignIn }: LandingPageProps) {
+export function LandingPage({ onSignIn, authInProgress = false }: LandingPageProps) {
   const [isLoading, setIsLoading] = useState(false)
 
-  const handleSignIn = () => {
+  const handleSignIn = async () => {
     setIsLoading(true)
-    setTimeout(() => {
+    try {
+      await onSignIn()
+    } finally {
       setIsLoading(false)
-      onSignIn()
-    }, 1500)
+    }
   }
 
   return (
@@ -44,10 +46,10 @@ export function LandingPage({ onSignIn }: LandingPageProps) {
         <Button
           size="lg"
           onClick={handleSignIn}
-          disabled={isLoading}
+          disabled={isLoading || authInProgress}
           className="px-8 py-6 text-base rounded-full hover:scale-105 transition-all duration-200"
         >
-          {isLoading ? (
+          {isLoading || authInProgress ? (
             <>
               <Loader2 className="mr-2 h-5 w-5 animate-spin" />
               Signing in...

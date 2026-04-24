@@ -1,381 +1,232 @@
-# Fabric SQL Database Integration Setup Guide
+# Fabric + Azure AD Setup Guide
 
-## Overview
+This is the single source of truth for configuring this app.
 
-This setup enables your Spark application to automatically load data from Microsoft Fabric SQL upon successful user authentication. The data includes:
+It covers:
+- Azure Active Directory authentication in the frontend
+- Backend API configuration for Fabric SQL
+- Real MSX schema mapping used by the backend queries
+- End-to-end local run and verification steps
 
-- **Accounts** - All accounts related to the user
-- **Opportunities Owned** - All opportunities owned by the user
-- **Deal Team Opportunities** - Opportunities where user is part of the deal team
-- **Related Account Opportunities** - Opportunities related to accounts the user is connected to
-- **Partner Engagements** - Partner referrals and engagements related to user, accounts, or opportunities
+## 1. Architecture
 
-## Architecture
+Flow:
+1. User signs in with Azure AD in the frontend using MSAL.
+2. Frontend gets an access token and calls backend API.
+3. Backend validates bearer token presence and runs Fabric SQL queries.
+4. Backend returns accounts, opportunities, deal team opportunities, related opportunities, and partner engagements.
+5. Frontend caches data with React Query.
 
-The integration uses a **secure backend-frontend architecture**:
+Core files:
+- src/lib/authConfig.ts
+- src/main.tsx
+- src/App.tsx
+- src/lib/fabricService.ts
+- src/hooks/useFabricData.ts
+- server.js or server-updated.js
 
+## 2. Azure AD App Registration (Not Published Yet)
+
+You can fully configure auth before publishing.
+
+Create app registration in Microsoft Entra admin center:
+1. Go to App registrations.
+2. Create a new registration.
+3. Supported account types:
+   - Single tenant for internal-only testing
+   - Multitenant for cross-tenant testing
+4. Add redirect URI:
+   - SPA: http://localhost:5173
+5. (Optional) Add post logout redirect URI:
+   - http://localhost:5173
+6. API permissions:
+   - Microsoft Graph User.Read (delegated)
+7. If your backend will validate custom API scopes later:
+   - Expose an API on backend app registration
+   - Add delegated scope like Fabric.Read
+   - Add that scope to frontend app registration
+
+Notes for unpublished apps:
+- Unpublished status is fine for development.
+- User consent behavior depends on tenant policy and who can grant consent.
+- You can test with internal users immediately once app registration exists.
+
+## 3. Frontend Environment Variables
+
+Create .env.local in workspace root:
+
+```env
+VITE_API_URL=http://localhost:3001/api
+
+VITE_AAD_CLIENT_ID=<frontend-app-client-id>
+VITE_AAD_TENANT_ID=organizations
+VITE_AAD_REDIRECT_URI=http://localhost:5173
+VITE_AAD_POST_LOGOUT_REDIRECT_URI=http://localhost:5173
+VITE_AAD_SCOPES=openid,profile,offline_access,User.Read
+
+# Optional. Use when backend API scope is configured.
+# Example: api://<backend-app-client-id>/Fabric.Read
+VITE_AAD_API_SCOPE=
 ```
-Frontend (React/TypeScript)
-    ↓ (HTTPS API calls)
-Backend Service (Node.js/Express)
-    ↓ (Secure DB connection)
-Fabric SQL Database
-    ↓ (Returns data)
-Backend ↓ (Filters/authorizes)
-Frontend ↓ (Caches with React Query)
-```
 
-## Prerequisites
+What each variable does:
+- VITE_AAD_CLIENT_ID: frontend app registration client ID.
+- VITE_AAD_TENANT_ID: tenant GUID, organizations, or common.
+- VITE_AAD_SCOPES: scopes requested during login.
+- VITE_AAD_API_SCOPE: scope for acquireTokenSilent before calling backend.
 
-- Node.js 16+ installed
-- Azure AD authentication configured
-- Access to Fabric SQL Database
-- Database credentials
+## 4. Frontend Auth Integration Details
 
-## Backend Setup
+Implemented behavior:
+- App uses MSAL provider in src/main.tsx.
+- Sign-in button triggers loginRedirect.
+- Sign-out triggers logoutRedirect.
+- Authenticated account identity is used as user context.
+- Access token is acquired silently and stored as authToken for backend API calls.
 
-### Step 1: Install Backend Dependencies
+Implementation summary:
+- src/lib/authConfig.ts defines MSAL config and login request.
+- src/main.tsx initializes PublicClientApplication and MsalProvider.
+- src/App.tsx:
+  - detects authenticated account
+  - derives user profile fields
+  - acquires token silently
+  - triggers Fabric data loading only when authenticated
+
+## 5. Backend Setup (Fabric SQL API)
+
+Install backend dependencies:
 
 ```bash
 npm install express mssql cors dotenv
 ```
 
-### Step 2: Create Environment File
-
-Create `.env` in the root directory with your Fabric SQL credentials:
+Create backend .env:
 
 ```env
-# Fabric SQL Database Configuration
 FABRIC_DB_SERVER=x6eps4xrq2xudenlfv6naeo3i4-ywxvf76w3u4e5gpdqvtoz57rsa.msit-database.fabric.microsoft.com
 FABRIC_DB_PORT=1433
 FABRIC_DB_NAME=ARGOS SQL-87da6cf7-5c29-48f5-9b97-b2a3245da352
-FABRIC_DB_USER=your_username
-FABRIC_DB_PASSWORD=your_password
-
-# Server Configuration
+FABRIC_DB_USER=<username>
+FABRIC_DB_PASSWORD=<password>
 PORT=3001
 NODE_ENV=development
+CORS_ORIGIN=http://localhost:5173
 ```
 
-### Step 3: Create Database
-
-The backend expects the following database schema. Create these tables in your Fabric database:
-
-#### Core Tables
-
-```sql
--- Users table
-CREATE TABLE [Users] (
-    [UserId] NVARCHAR(MAX) PRIMARY KEY,
-    [UserName] NVARCHAR(MAX),
-    [Email] NVARCHAR(MAX),
-    [CreatedDate] DATETIME DEFAULT GETDATE()
-)
-
--- Accounts table
-CREATE TABLE [Accounts] (
-    [AccountId] NVARCHAR(MAX) PRIMARY KEY,
-    [AccountName] NVARCHAR(MAX),
-    [AccountReference] NVARCHAR(MAX),
-    [Industry] NVARCHAR(MAX),
-    [Revenue] DECIMAL(18,2),
-    [EmployeeCount] INT,
-    [Location] NVARCHAR(MAX),
-    [Website] NVARCHAR(MAX),
-    [CreatedDate] DATETIME DEFAULT GETDATE(),
-    [LastModifiedDate] DATETIME DEFAULT GETDATE()
-)
-
--- User-Account relationships
-CREATE TABLE [UserAccounts] (
-    [UserAccountId] NVARCHAR(MAX) PRIMARY KEY,
-    [UserId] NVARCHAR(MAX) FOREIGN KEY REFERENCES [Users]([UserId]),
-    [AccountId] NVARCHAR(MAX) FOREIGN KEY REFERENCES [Accounts]([AccountId]),
-    [Role] NVARCHAR(MAX),
-    [CreatedDate] DATETIME DEFAULT GETDATE(),
-    INDEX IX_UserAccount (UserId, AccountId)
-)
-
--- Opportunities table
-CREATE TABLE [Opportunities] (
-    [OpportunityId] NVARCHAR(MAX) PRIMARY KEY,
-    [OpportunityName] NVARCHAR(MAX),
-    [AccountId] NVARCHAR(MAX) FOREIGN KEY REFERENCES [Accounts]([AccountId]),
-    [OwnerId] NVARCHAR(MAX) FOREIGN KEY REFERENCES [Users]([UserId]),
-    [DealValue] DECIMAL(18,2),
-    [ForecastCategory] NVARCHAR(MAX),
-    [Stage] NVARCHAR(MAX),
-    [CloseDate] DATETIME,
-    [Description] NVARCHAR(MAX),
-    [CreatedDate] DATETIME DEFAULT GETDATE(),
-    [LastModifiedDate] DATETIME DEFAULT GETDATE(),
-    INDEX IX_Owner (OwnerId),
-    INDEX IX_Account (AccountId)
-)
-
--- Deal Team members
-CREATE TABLE [DealTeam] (
-    [DealTeamId] NVARCHAR(MAX) PRIMARY KEY,
-    [OpportunityId] NVARCHAR(MAX) FOREIGN KEY REFERENCES [Opportunities]([OpportunityId]),
-    [UserId] NVARCHAR(MAX) FOREIGN KEY REFERENCES [Users]([UserId]),
-    [Role] NVARCHAR(MAX),
-    [JoinedDate] DATETIME DEFAULT GETDATE(),
-    INDEX IX_UserOpportunity (UserId, OpportunityId)
-)
-
--- Partner Engagements
-CREATE TABLE [PartnerEngagements] (
-    [EngagementId] NVARCHAR(MAX) PRIMARY KEY,
-    [EngagementName] NVARCHAR(MAX),
-    [EngagementType] NVARCHAR(MAX), -- 'referral', 'co-sell', 'partnership', 'other'
-    [RelatedAccountId] NVARCHAR(MAX) FOREIGN KEY REFERENCES [Accounts]([AccountId]),
-    [RelatedOpportunityId] NVARCHAR(MAX) FOREIGN KEY REFERENCES [Opportunities]([OpportunityId]),
-    [RelatedUserId] NVARCHAR(MAX) FOREIGN KEY REFERENCES [Users]([UserId]),
-    [Status] NVARCHAR(MAX),
-    [CreatedDate] DATETIME DEFAULT GETDATE(),
-    [LastModifiedDate] DATETIME DEFAULT GETDATE(),
-    INDEX IX_Related (RelatedUserId, RelatedAccountId, RelatedOpportunityId)
-)
-```
-
-### Step 4: Run the Backend Server
+Run backend:
 
 ```bash
 node server.js
 ```
 
-You should see: `Fabric API Server running on http://localhost:3001`
-
-## Frontend Setup
-
-### Step 1: Configure Environment Variable
-
-Create `.env.local` in the frontend root with:
-
-```env
-VITE_API_URL=http://localhost:3001/api
-```
-
-For production:
-
-```env
-VITE_API_URL=https://your-backend-api.com/api
-```
-
-### Step 2: How It Works
-
-When a user signs in:
-
-1. **Frontend detects authentication** → `handleSignIn()` is called
-2. **User ID is set** → Triggers `useFabricData` hook
-3. **React Query fetches data** → Calls `/api/fabric/data` endpoint
-4. **Backend queries database** → Executes all SQL queries
-5. **Data is cached** → React Query stores data for 5 minutes
-6. **Auto-population** → Selected accounts are auto-filled from retrieved data
-
-### Step 3: Using Fabric Data in Components
-
-Access Fabric data anywhere using the hook:
-
-```typescript
-import { useFabricData } from '@/hooks/useFabricData'
-
-function MyComponent() {
-  const { data: fabricData, isLoading, error } = useFabricData(userId)
-
-  if (isLoading) return <div>Loading accounts...</div>
-  if (error) return <div>Error: {error.message}</div>
-
-  return (
-    <div>
-      <h2>Your Accounts ({fabricData.accounts.length})</h2>
-      {fabricData.accounts.map((account) => (
-        <div key={account.accountId}>{account.accountName}</div>
-      ))}
-
-      <h2>Your Opportunities ({fabricData.opportunities.length})</h2>
-      {fabricData.opportunities.map((opp) => (
-        <div key={opp.opportunityId}>
-          {opp.opportunityName} - ${opp.dealValue}
-        </div>
-      ))}
-    </div>
-  )
-}
-```
-
-## Data Fetching Details
-
-### Query 1: User Accounts
-
-**Retrieves:** All accounts the user is related to
-
-```sql
-WHERE user_accounts.user_id = @userId
-ORDER BY last_modified_date DESC
-```
-
-### Query 2: Owned Opportunities
-
-**Retrieves:** All opportunities where user is the owner
-
-```sql
-WHERE opportunities.owner_id = @userId
-ORDER BY close_date ASC
-```
-
-### Query 3: Deal Team Opportunities
-
-**Retrieves:** Opportunities where user is part of the deal team (but not owner)
-
-```sql
-WHERE deal_team.user_id = @userId
-AND opportunities.owner_id != @userId
-ORDER BY close_date ASC
-```
-
-### Query 4: Related Account Opportunities
-
-**Retrieves:** Opportunities from accounts the user owns that they don't own or are on deal team for
-
-```sql
-WHERE account_id IN (SELECT account_id FROM user_accounts WHERE user_id = @userId)
-AND owner_id != @userId
-AND opportunity_id NOT IN (SELECT opportunity_id FROM deal_team WHERE user_id = @userId)
-ORDER BY close_date ASC
-```
-
-### Query 5: Partner Engagements
-
-**Retrieves:** All partner referrals/engagements related to user, their accounts, or their opportunities
-
-```sql
-WHERE related_user_id = @userId
-OR related_account_id IN (SELECT account_id FROM user_accounts WHERE user_id = @userId)
-OR related_opportunity_id IN (
-  SELECT opportunity_id FROM opportunities WHERE owner_id = @userId
-  UNION
-  SELECT opportunity_id FROM deal_team WHERE user_id = @userId
-)
-ORDER BY last_modified_date DESC
-```
-
-## Authentication & Security
-
-### Adding Authentication Middleware
-
-Update the backend's `authenticate` middleware in `server.js`:
-
-```typescript
-async function authenticate(req, res, next) {
-  const authHeader = req.headers.authorization
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ message: 'Unauthorized' })
-  }
-
-  const token = authHeader.substring(7)
-
-  try {
-    // Verify JWT token with your auth provider
-    const decoded = await verifyToken(token) // Implement your verification
-    req.userId = decoded.sub // User ID from token
-    next()
-  } catch (error) {
-    res.status(401).json({ message: 'Invalid token' })
-  }
-}
-```
-
-### Environment Variable Best Practices
-
-- **Never commit `.env` files** to version control
-- **Use environment secrets** in CI/CD pipelines
-- **Rotate credentials** regularly
-- **Use AD Interactive authentication** - credentials are not stored
-- **Restrict database permissions** to read-only queries
-
-## Troubleshooting
-
-### Backend Connection Issues
-
-**Error:** `Failed to connect to Fabric SQL Database`
-
-1. Check connection string in `.env`
-2. Verify firewall allows `1433` port
-3. Confirm username/password are correct
-4. Test connection using Azure Data Studio
-
-### Frontend Loading Issues
-
-**Error:** `Failed to fetch Fabric data`
-
-1. Verify backend is running: `curl http://localhost:3001/api/health`
-2. Check `VITE_API_URL` in `.env.local`
-3. Verify auth token is being sent
-4. Check browser console for CORS errors
-
-### Empty Data Results
-
-1. Verify tables are populated with test data
-2. Check user ID is correct
-3. Verify SQL queries return results in SQL Server Management Studio
-4. Enable debug logging in backend
-
-## Testing
-
-### Test Backend Connectivity
+If you want the MSX-schema query version already prepared in this workspace:
 
 ```bash
-curl -X POST http://localhost:3001/api/fabric/data \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer test-token" \
-  -d '{"userId":"user-123"}'
+cp server-updated.js server.js
+node server.js
 ```
 
-### Test Frontend Integration
+## 6. Real Fabric Schema Mapping Used
 
-1. Open browser DevTools → Network tab
-2. Sign in to the app
-3. Watch for `/api/fabric/data` request
-4. Verify response contains accounts and opportunities
+The implemented query model targets these tables:
+- dbo.MSX_accounts
+- dbo.MSX_opportunities
+- dbo.MSX_opportunitydealteam
+- dbo.MSX_partnerreferrals
+- dbo.MSX_partneraccounts (available for extension)
 
-## Performance Optimization
+Data sets loaded after auth:
+1. Accounts related to user
+   - from dbo.MSX_accounts using ID_owner or ID_owningteam
+2. Opportunities owned by user
+   - from dbo.MSX_opportunities using ID_owner
+3. Opportunities where user is on deal team
+   - join dbo.MSX_opportunitydealteam with dbo.MSX_opportunities
+4. Opportunities related to user-linked accounts
+   - account-based filter from dbo.MSX_accounts
+5. Partner engagements/referrals related to user/account/opportunity
+   - from dbo.MSX_partnerreferrals with account and opportunity joins
 
-The integration includes several optimizations:
+## 7. End-to-End Startup
 
-- **React Query caching** - Data cached for 5 minutes by default
-- **Parallel queries** - All 5 queries run simultaneously
-- **Single endpoint** - Batch API call vs. multiple requests
-- **Automatic retry** - Failed requests retry up to 3 times
-- **Background refetch** - Data updates automatically when stale
+Terminal 1 (backend):
 
-To adjust caching:
-
-```typescript
-// In useFabricData.ts
-staleTime: 5 * 60 * 1000, // Change this value (ms)
-gcTime: 10 * 60 * 1000,   // Change this value (ms)
+```bash
+node server.js
 ```
 
-## Production Deployment
+Terminal 2 (frontend):
 
-### Backend Deployment
+```bash
+npm run dev
+```
 
-1. Set environment variables on your hosting platform (Azure App Service, AWS, etc.)
-2. Use production database credentials
-3. Enable SSL/TLS (HTTPS)
-4. Set `NODE_ENV=production`
-5. Use connection pooling for multiple requests
+Test:
+1. Open http://localhost:5173
+2. Select sign in with Azure Active Directory
+3. Complete login in Microsoft identity prompt
+4. Open browser DevTools network tab
+5. Verify POST to /api/fabric/data
+6. Verify response payload has non-empty arrays if test data exists
 
-### Frontend Deployment
+## 8. Verification Checklist
 
-1. Update `VITE_API_URL` to production backend URL
-2. Build: `npm run build`
-3. Deploy to static hosting (Azure Static Web Apps, Vercel, etc.)
+Auth:
+- Login redirects to Microsoft sign-in
+- Returning to app shows authenticated user in nav
+- Sign out logs user out and returns to landing page
 
-## Support & Next Steps
+Fabric:
+- Backend health endpoint returns OK
+- /api/fabric/data returns 200
+- Account auto-selection populates in scan settings
 
-- Review [React Query documentation](https://tanstack.com/query/latest)
-- Check [MSSQL Node.js driver docs](https://github.com/mapbox/node-pre-gyp)
-- Explore additional data needed for your use case
-- Consider adding [real-time updates](https://learn.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-views/system-dynamic-management-views)
+## 9. Troubleshooting
+
+Login fails immediately:
+- Check VITE_AAD_CLIENT_ID and VITE_AAD_TENANT_ID
+- Confirm SPA redirect URI matches exactly
+- Confirm app registration supports intended account type
+
+Token acquisition warning:
+- If VITE_AAD_API_SCOPE is empty, app falls back to User.Read
+- Add custom API scope once backend app registration exposes it
+
+Backend returns 401:
+- Ensure Authorization header is present
+- Confirm authToken is set in browser storage
+
+Backend returns empty data:
+- Validate user identifier mapping against ID_owner data in Fabric
+- Run direct SQL checks against MSX tables for the signed-in user context
+
+## 10. Production Hardening (Next Step)
+
+Recommended before production:
+- Validate JWT bearer token in backend middleware
+- Enforce issuer, audience, tenant, and signature checks
+- Stop relying on token presence only
+- Use least-privilege scopes
+- Store secrets in secure runtime config, not files
+- Add API rate limiting and structured logging
+
+## 11. Commands Reference
+
+Install frontend auth packages:
+
+```bash
+npm install @azure/msal-browser @azure/msal-react
+```
+
+Build frontend:
+
+```bash
+npm run build
+```
+
+Run backend:
+
+```bash
+node server.js
+```
