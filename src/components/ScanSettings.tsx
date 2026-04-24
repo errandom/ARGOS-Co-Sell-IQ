@@ -76,18 +76,18 @@ export function ScanSettingsView({
     <div className="min-h-screen bg-background animate-fade-in">
       <div className="max-w-[720px] mx-auto px-6 py-8 space-y-6">
         <div>
-          <h1 className="text-3xl font-bold text-white mb-2">Scan Settings</h1>
+          <h1 className="text-3xl font-bold text-foreground mb-2">Scan Settings</h1>
           <p className="text-muted-foreground">Configure your co-sell detection parameters</p>
         </div>
 
         <Card className="p-6 bg-card border border-border space-y-6">
           <div>
-            <h2 className="text-lg font-semibold text-white mb-4">Data Sources</h2>
+            <h2 className="text-lg font-semibold text-card-foreground mb-4">Data Sources</h2>
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <Mail className="w-5 h-5 text-muted-foreground" />
-                  <span className="text-white">Outlook Email</span>
+                  <span className="text-card-foreground">Outlook Email</span>
                 </div>
                 <Switch
                   checked={settings.sources.email}
@@ -102,7 +102,7 @@ export function ScanSettingsView({
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <MessageSquare className="w-5 h-5 text-muted-foreground" />
-                  <span className="text-white">Teams Chat</span>
+                  <span className="text-card-foreground">Teams Chat</span>
                 </div>
                 <Switch
                   checked={settings.sources.chat}
@@ -117,7 +117,7 @@ export function ScanSettingsView({
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <Video className="w-5 h-5 text-muted-foreground" />
-                  <span className="text-white">Meeting Transcripts</span>
+                  <span className="text-card-foreground">Meeting Transcripts</span>
                 </div>
                 <Switch
                   checked={settings.sources.meetings}
@@ -134,7 +134,7 @@ export function ScanSettingsView({
         </Card>
 
         <Card className="p-6 bg-card border border-border space-y-4">
-          <h2 className="text-lg font-semibold text-white">Date Range</h2>
+          <h2 className="text-lg font-semibold text-card-foreground">Date Range</h2>
           <div className="flex flex-wrap gap-2">
             {[
               { value: 'last3days', label: 'Last 3 days' },
@@ -159,7 +159,7 @@ export function ScanSettingsView({
                 <label className="text-sm text-muted-foreground mb-2 block">Start Date</label>
                 <input
                   type="date"
-                  className="w-full px-3 py-2 bg-background border border-border rounded-md text-white"
+                  className="w-full px-3 py-2 bg-background border border-border rounded-md text-foreground"
                   value={settings.customStartDate || ''}
                   onChange={(e) =>
                     onUpdateSettings({ ...settings, customStartDate: e.target.value })
@@ -170,7 +170,7 @@ export function ScanSettingsView({
                 <label className="text-sm text-muted-foreground mb-2 block">End Date</label>
                 <input
                   type="date"
-                  className="w-full px-3 py-2 bg-background border border-border rounded-md text-white"
+                  className="w-full px-3 py-2 bg-background border border-border rounded-md text-foreground"
                   value={settings.customEndDate || ''}
                   onChange={(e) =>
                     onUpdateSettings({ ...settings, customEndDate: e.target.value })
@@ -184,7 +184,7 @@ export function ScanSettingsView({
         <Card className="p-6 bg-card border border-border space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-lg font-semibold text-white">Incremental Scanning</h2>
+              <h2 className="text-lg font-semibold text-card-foreground">Incremental Scanning</h2>
               <p className="text-sm text-muted-foreground mt-1">
                 Speeds up scanning by skipping previously processed data
               </p>
@@ -199,39 +199,8 @@ export function ScanSettingsView({
         </Card>
 
         <Card className="p-6 bg-card border border-border space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-semibold text-white">Appearance</h2>
-              <p className="text-sm text-muted-foreground mt-1">
-                Choose your preferred theme
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant={settings.theme === 'dark' || !settings.theme ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => onUpdateSettings({ ...settings, theme: 'dark' })}
-                className="gap-2"
-              >
-                <Moon className="w-4 h-4" />
-                Dark
-              </Button>
-              <Button
-                variant={settings.theme === 'bright' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => onUpdateSettings({ ...settings, theme: 'bright' })}
-                className="gap-2"
-              >
-                <Sun className="w-4 h-4" />
-                Bright
-              </Button>
-            </div>
-          </div>
-        </Card>
-
-        <Card className="p-6 bg-card border border-border space-y-4">
           <div>
-            <h2 className="text-lg font-semibold text-white mb-2">Accounts</h2>
+            <h2 className="text-lg font-semibold text-card-foreground mb-2">Accounts</h2>
             <p className="text-sm text-muted-foreground mb-4">Scoped to your assigned accounts in SPM</p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -249,11 +218,11 @@ export function ScanSettingsView({
         </Card>
 
         <Card className="p-6 bg-card border border-border space-y-4">
-          <h2 className="text-lg font-semibold text-white">Keywords</h2>
+          <h2 className="text-lg font-semibold text-card-foreground">Keywords</h2>
           <div className="flex gap-2">
             <input
               type="text"
-              className="flex-1 px-3 py-2 bg-background border border-border rounded-md text-white"
+              className="flex-1 px-3 py-2 bg-background border border-border rounded-md text-foreground"
               placeholder="Add keyword..."
               value={keywordInput}
               onChange={(e) => setKeywordInput(e.target.value)}
@@ -289,6 +258,42 @@ export function ScanSettingsView({
           <Button onClick={onStartScan} size="lg">
             Start Detection
           </Button>
+        </div>
+
+        <div className="border-t border-border pt-6 mt-8">
+          <h2 className="text-2xl font-bold text-foreground mb-2">Appearance</h2>
+          <p className="text-muted-foreground mb-6">Customize the visual appearance of the application</p>
+          
+          <Card className="p-6 bg-card border border-border space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-card-foreground">Theme</h3>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Choose your preferred color scheme
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant={settings.theme === 'dark' || !settings.theme ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => onUpdateSettings({ ...settings, theme: 'dark' })}
+                  className="gap-2"
+                >
+                  <Moon className="w-4 h-4" />
+                  Dark
+                </Button>
+                <Button
+                  variant={settings.theme === 'bright' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => onUpdateSettings({ ...settings, theme: 'bright' })}
+                  className="gap-2"
+                >
+                  <Sun className="w-4 h-4" />
+                  Bright
+                </Button>
+              </div>
+            </div>
+          </Card>
         </div>
       </div>
     </div>
