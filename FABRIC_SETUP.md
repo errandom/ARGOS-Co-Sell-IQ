@@ -23,7 +23,7 @@ Core files:
 - src/App.tsx
 - src/lib/fabricService.ts
 - src/hooks/useFabricData.ts
-- server.js or server-updated.js
+- server.js
 
 ## 2. Azure AD App Registration (Not Published Yet)
 
