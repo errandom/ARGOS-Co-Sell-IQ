@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Toaster } from 'sonner'
 import { LandingPage } from '@/components/LandingPage'
 import { Navigation } from '@/components/Navigation'
@@ -10,6 +11,8 @@ import { ScanningOverlay } from '@/components/ScanningOverlay'
 import { generateDetections, generatePipelineData } from '@/lib/mockData'
 import { useFabricData } from '@/hooks/useFabricData'
 import type { User, ScanSettings, Detection, FabricData } from '@/types'
+
+const queryClient = new QueryClient()
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
@@ -104,15 +107,15 @@ function App() {
 
   if (!isAuthenticated) {
     return (
-      <>
+      <QueryClientProvider client={queryClient}>
         <LandingPage onSignIn={handleSignIn} />
         <Toaster position="bottom-right" theme="dark" />
-      </>
+      </QueryClientProvider>
     )
   }
 
   return (
-    <>
+    <QueryClientProvider client={queryClient}>
       <div className="min-h-screen bg-background font-sans">
         <Navigation
           user={user}
@@ -147,7 +150,7 @@ function App() {
 
       {isScanning && <ScanningOverlay />}
       <Toaster position="bottom-right" theme="dark" />
-    </>
+    </QueryClientProvider>
   )
 }
 
