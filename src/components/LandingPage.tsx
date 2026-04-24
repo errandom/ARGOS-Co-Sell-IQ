@@ -58,7 +58,7 @@ export function LandingPage({ onSignIn }: LandingPageProps) {
         </Button>
 
         <p className="mt-12 text-sm text-muted-foreground">
-          Proof of Concept · ARGOS · 2025
+          Proof of Concept · ARGOS · 2026
         </p>
       </div>
     </div>

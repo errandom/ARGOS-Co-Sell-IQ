@@ -16,6 +16,7 @@ export interface ScanSettings {
   incrementalScan: boolean
   selectedAccounts: string[]
   keywords: string[]
+  theme?: 'dark' | 'bright'
 }
 
 export interface Detection {

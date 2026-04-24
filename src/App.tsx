@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Toaster } from 'sonner'
 import { LandingPage } from '@/components/LandingPage'
 import { Navigation } from '@/components/Navigation'
@@ -28,10 +28,20 @@ function App() {
     incrementalScan: false,
     selectedAccounts: [],
     keywords: ['co-sell', 'partner engagement'],
+    theme: 'dark',
   })
 
   const [detections, setDetections] = useState<Detection[]>([])
   const [pipelineData] = useState(generatePipelineData())
+
+  useEffect(() => {
+    const root = document.documentElement
+    if (scanSettings.theme === 'bright') {
+      root.classList.add('bright')
+    } else {
+      root.classList.remove('bright')
+    }
+  }, [scanSettings.theme])
 
   const handleSignIn = () => {
     setIsAuthenticated(true)

@@ -3,7 +3,7 @@ import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
-import { Mail, MessageSquare, Video, X, AlertTriangle } from 'lucide-react'
+import { Mail, MessageSquare, Video, X, AlertTriangle, Moon, Sun } from 'lucide-react'
 import type { ScanSettings } from '@/types'
 
 interface ScanSettingsViewProps {
@@ -67,6 +67,7 @@ export function ScanSettingsView({
       incrementalScan: false,
       selectedAccounts: [],
       keywords: ['co-sell', 'partner engagement'],
+      theme: 'dark',
     })
     setShowCustomDate(false)
   }
@@ -194,6 +195,37 @@ export function ScanSettingsView({
                 onUpdateSettings({ ...settings, incrementalScan: checked })
               }
             />
+          </div>
+        </Card>
+
+        <Card className="p-6 bg-card border border-border space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-white">Appearance</h2>
+              <p className="text-sm text-muted-foreground mt-1">
+                Choose your preferred theme
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant={settings.theme === 'dark' || !settings.theme ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => onUpdateSettings({ ...settings, theme: 'dark' })}
+                className="gap-2"
+              >
+                <Moon className="w-4 h-4" />
+                Dark
+              </Button>
+              <Button
+                variant={settings.theme === 'bright' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => onUpdateSettings({ ...settings, theme: 'bright' })}
+                className="gap-2"
+              >
+                <Sun className="w-4 h-4" />
+                Bright
+              </Button>
+            </div>
           </div>
         </Card>
 
