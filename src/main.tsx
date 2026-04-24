@@ -3,7 +3,6 @@ import { ErrorBoundary } from 'react-error-boundary'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { PublicClientApplication, EventType, AuthenticationResult } from '@azure/msal-browser'
 import { MsalProvider } from '@azure/msal-react'
-import '@github/spark/spark'
 
 import App from './App.tsx'
 import { ErrorFallback } from './ErrorFallback.tsx'
