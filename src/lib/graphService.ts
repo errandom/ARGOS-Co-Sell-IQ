@@ -1,11 +1,11 @@
 /**
- * Microsoft Graph API Service
+ *
  *
  * Fetches real emails, Teams chats/messages, and calendar events
- * for the authenticated user and analyses them for partner co-sell signals.
- *
  * Required Azure AD app permissions (delegated):
- *   Mail.Read         – user emails
+ *
+ *
+ * If a scope hasn't been consented 
  *   Chat.Read         – Teams chat messages
  *   Calendars.Read    – calendar events / meeting details
  *
@@ -14,164 +14,164 @@
  */
 
 import type { IPublicClientApplication, AccountInfo } from '@azure/msal-browser'
-import type { Detection, ScanSettings } from '@/types'
+// ---------------------------------------------------
 
-const GRAPH_BASE = 'https://graph.microsoft.com/v1.0'
-
-// ---------------------------------------------------------------------------
-// Known partner domains / display-name fragments used for detection
-// ---------------------------------------------------------------------------
-const PARTNER_SIGNALS: { name: string; domains: string[]; keywords: string[] }[] = [
-  {
-    name: 'Accenture',
     domains: ['accenture.com'],
-    keywords: ['accenture'],
-  },
-  {
+
     name: 'Infosys',
-    domains: ['infosys.com'],
     keywords: ['infosys'],
-  },
   {
-    name: 'Wipro',
     domains: ['wipro.com'],
-    keywords: ['wipro'],
-  },
+  }
+    name: 'HCL Technol
+    keywords: ['hcl technologie
   {
-    name: 'HCL Technologies',
-    domains: ['hcltech.com', 'hcl.com'],
-    keywords: ['hcl technologies', 'hcltech'],
-  },
-  {
-    name: 'TCS',
-    domains: ['tcs.com'],
-    keywords: ['tata consultancy', ' tcs '],
-  },
-  {
-    name: 'Capgemini',
-    domains: ['capgemini.com'],
+    
+  }
+    name: 'Capgemini
     keywords: ['capgemini'],
-  },
   {
-    name: 'Deloitte',
-    domains: ['deloitte.com'],
-    keywords: ['deloitte'],
-  },
-  {
+    
+  }
     name: 'KPMG',
-    domains: ['kpmg.com'],
     keywords: ['kpmg'],
-  },
 ]
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function dateFilterStart(dateRange: ScanSettings['dateRange'], customStart?: string): string {
-  if (dateRange === 'custom' && customStart) return customStart
+// -
+// 
+function dateFilterStart(date
   const now = new Date()
-  const daysBack: Record<string, number> = {
     last3days: 3,
-    lastweek: 7,
-    last14days: 14,
-    lastmonth: 30,
+    
   }
-  const days = daysBack[dateRange] ?? 14
-  now.setDate(now.getDate() - days)
-  return now.toISOString()
+  now.setDate(no
 }
-
-function detectPartner(text: string, senderEmail?: string): string | null {
-  const lower = text.toLowerCase()
-  for (const p of PARTNER_SIGNALS) {
-    if (senderEmail && p.domains.some((d) => senderEmail.toLowerCase().endsWith(`@${d}`))) {
-      return p.name
-    }
-    if (p.keywords.some((kw) => lower.includes(kw))) return p.name
-  }
+function detectPartner(text: string, senderE
+  fo
+   
+    if (p.keywords.som
   return null
-}
 
-function matchesKeywords(text: string, keywords: string[]): number {
-  const lower = text.toLowerCase()
-  return keywords.filter((kw) => lower.includes(kw.toLowerCase())).length
+  co
 }
-
-function scoreConfidence(keywordHits: number, hasPartner: boolean): number {
-  let base = 50
-  base += Math.min(keywordHits * 12, 36)
-  if (hasPartner) base += 14
+function scoreConfide
+  base += Math.min(keywordHits
   return Math.min(base, 99)
-}
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
+  r
+    month: 'long'
   })
-}
 
-function stripHtml(html: string): string {
-  return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
-}
+  re
 
-async function graphGet<T>(token: string, path: string): Promise<T> {
-  const resp = await fetch(`${GRAPH_BASE}${path}`, {
-    headers: { Authorization: `Bearer ${token}` },
+
   })
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}))
-    throw new Error(err?.error?.message || `Graph ${path} → ${resp.status}`)
+    const 
   }
-  return resp.json() as Promise<T>
-}
 
 // ---------------------------------------------------------------------------
-// Token acquisition
-// ---------------------------------------------------------------------------
-
-async function acquireToken(
-  msalInstance: IPublicClientApplication,
+// ------------------------------------------------------------
+async function acquireTo
   account: AccountInfo,
-  scopes: string[],
-): Promise<string | null> {
-  try {
-    const result = await msalInstance.acquireTokenSilent({ account, scopes })
-    return result.accessToken
+): Promise<string
+    const result
   } catch {
-    try {
-      const result = await msalInstance.acquireTokenPopup({ account, scopes })
-      return result.accessToken
-    } catch (popupErr) {
-      console.warn(`Could not acquire token for [${scopes.join(', ')}]:`, popupErr)
+      const result
+   
       return null
-    }
   }
-}
 
-// ---------------------------------------------------------------------------
-// Email scan  (Mail.Read)
-// ---------------------------------------------------------------------------
+/
 
-interface GraphMessage {
   id: string
-  subject?: string
   bodyPreview?: string
-  body?: { content?: string; contentType?: string }
   receivedDateTime?: string
-  sentDateTime?: string
   from?: { emailAddress?: { address?: string; name?: string } }
-  toRecipients?: { emailAddress?: { address?: string; name?: string } }[]
-  ccRecipients?: { emailAddress?: { address?: string; name?: string } }[]
-}
+  ccRecipients?: { 
 
-async function scanEmails(
   token: string,
-  settings: ScanSettings,
+  s
+  const detec
+ 
+
+
+
+  try {
+ 
+
+
+    const textC
+      ' ' +
+        ? stripHtml(msg.body
+
+ 
+
+
+    const date = msg.receivedDateTime ?? msg.sentDat
+    // Try to match 
+    const matchedA
+
+    
+ 
+
+      date: formatDate(date),
+      partner: partner ?? senderEmail.split('@')[1] ?? 'Unknown Pa
+ 
+
+  }
+  return detections
+
+// T
+
+  id: string
+  chatType?: string
+}
+interface GraphChatMessage {
+ 
+
+
+  token: string,
   since: string,
-): Promise<Detection[]> {
+
+  let chatsData: { value?: G
+    chatsData = await graphGet<{ value?: 
+      `/me/chats?$filte
+  } catch (err) {
+    return []
+
+    let msgsData: { value?: GraphChatMessage[] }
+      msgsData = await graphG
+        `/m
+    } cat
+    }
+    for (const msg of msgsData.
+        msg.body?.conten
+          : msg.body?.content ?? ''
+      const sende
+     
+   
+ 
+
+        settings.selectedAccounts.find((a) => lowerText.includes(a.toLowerCase
+        'Teams Chat'
+      detections.push({
+
+        title:
+          `T
+        account: m
+        revenue: '',
+        tag: 'new-opportunity',
+      })
+  }
+  return detections
+
+// Calendar / meetings scan  (Calendars.Read)
+
+
+  bodyPreview?: string
+  start?: { date
+  attendees?: { emailAddr
+  onlineMeetingP
+
   const detections: Detection[] = []
   const keywordFilter = settings.keywords.map((k) => `"${k}"`).join(' OR ')
   const search = keywordFilter ? `&$search=${encodeURIComponent(keywordFilter)}` : ''
@@ -430,38 +430,38 @@ export async function runGraphScan(
     }
   }
 
-  // ---- Teams chats ----
-  if (settings.sources.chat) {
-    const token = await acquireToken(msalInstance, account, ['Chat.Read'])
-    if (token) {
-      const results = await scanChats(token, settings, since)
-      detections.push(...results)
-    } else {
-      errors.push('Chat scan skipped: Chat.Read permission not available.')
-    }
-  }
 
-  // ---- Calendar / meetings ----
-  if (settings.sources.meetings) {
-    const token = await acquireToken(msalInstance, account, ['Calendars.Read'])
-    if (token) {
-      const results = await scanCalendar(token, settings, since)
-      detections.push(...results)
-    } else {
-      errors.push('Meeting scan skipped: Calendars.Read permission not available.')
-    }
-  }
 
-  // Deduplicate by id (shouldn't happen but defensive)
-  const seen = new Set<string>()
-  const unique = detections.filter((d) => {
-    if (seen.has(d.id)) return false
-    seen.add(d.id)
-    return true
-  })
 
-  // Sort by confidence descending
-  unique.sort((a, b) => b.confidence - a.confidence)
 
-  return { detections: unique, errors }
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
