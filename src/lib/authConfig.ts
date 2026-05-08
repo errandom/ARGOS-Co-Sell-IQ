@@ -25,11 +25,21 @@ export const msalConfig: Configuration = {
   },
   cache: {
     cacheLocation: 'localStorage',
-    storeAuthStateInCookie: false,
   },
 }
 
-const configuredScopes = (import.meta.env.VITE_AAD_SCOPES || 'openid,profile,offline_access,User.Read')
+const defaultScopes = [
+  'openid',
+  'profile',
+  'offline_access',
+  'User.Read',
+  // Graph scopes required for the communication scan feature
+  'Mail.Read',
+  'Chat.Read',
+  'Calendars.Read',
+].join(',')
+
+const configuredScopes = (import.meta.env.VITE_AAD_SCOPES || defaultScopes)
   .split(',')
   .map((scope: string) => scope.trim())
   .filter(Boolean)

@@ -8,7 +8,8 @@ import { ScanSettingsView } from '@/components/ScanSettings'
 import { DetectionsView } from '@/components/Detections'
 import { PipelineView } from '@/components/Pipeline'
 import { ScanningOverlay } from '@/components/ScanningOverlay'
-import { generateDetections, generatePipelineData } from '@/lib/mockData'
+import { generatePipelineData } from '@/lib/mockData'
+import { runGraphScan } from '@/lib/graphService'
 import { useFabricData } from '@/hooks/useFabricData'
 import { apiScope, loginRequest } from '@/lib/authConfig'
 import type { User, ScanSettings, Detection } from '@/types'
@@ -127,14 +128,29 @@ function App() {
     setCurrentView(view)
   }
 
-  const handleStartScan = () => {
+  const handleStartScan = async () => {
+    const activeAccount = instance.getActiveAccount() || accounts[0]
+    if (!activeAccount) return
+
     setIsScanning(true)
-    setTimeout(() => {
+    try {
+      const { detections: graphDetections, errors } = await runGraphScan(
+        instance,
+        activeAccount,
+        scanSettings,
+      )
+      if (errors.length > 0) {
+        errors.forEach((e) => console.warn('[GraphScan]', e))
+      }
+      setDetections(graphDetections)
+    } catch (err) {
+      console.error('Graph scan failed:', err)
+      setDetections([])
+    } finally {
       setIsScanning(false)
       setHasScanRun(true)
-      setDetections(generateDetections())
       setCurrentView('detections')
-    }, 3000)
+    }
   }
 
   const handleUpdateDetection = (id: string, updates: Partial<Detection>) => {
