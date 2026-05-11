@@ -34,6 +34,7 @@ export async function fetchFabricData(
   token: string,
   userId: string,
   userAlias: string,
+  userName: string,
 ): Promise<Omit<FabricData, 'isLoading' | 'error'>> {
-  return fabricFetch('/fabric/data', token, { userId, userAlias })
+  return fabricFetch('/fabric/data', token, { userId, userAlias, userName })
 }

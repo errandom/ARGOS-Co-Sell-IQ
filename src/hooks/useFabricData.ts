@@ -13,6 +13,12 @@ function deriveUserAlias(username?: string | null): string | null {
   return normalized.slice(0, atIndex)
 }
 
+function deriveDisplayName(name?: string | null): string | null {
+  if (!name) return null
+  const normalized = name.trim().replace(/\s+/g, ' ')
+  return normalized || null
+}
+
 /** Acquire a token silently for the backend API */
 function useAuthToken() {
   const { instance, accounts } = useMsal()
@@ -58,6 +64,15 @@ function useUserAlias(): string | null {
   return deriveUserAlias(acct?.username)
 }
 
+function useUserDisplayName(): string | null {
+  const { instance, accounts } = useMsal()
+  const isAuthenticated = useIsAuthenticated()
+
+  if (!isAuthenticated) return null
+  const acct = instance.getActiveAccount() || accounts[0]
+  return deriveDisplayName(acct?.name)
+}
+
 /**
  * Load user accounts immediately after authentication.
  * Returns accounts and loading/error state.
@@ -84,11 +99,12 @@ export function useFabricFullData(enabled = true) {
   const token = useAuthToken()
   const userId = useUserId()
   const userAlias = useUserAlias()
+  const userName = useUserDisplayName()
 
   return useQuery<Omit<FabricData, 'isLoading' | 'error'>, Error>({
-    queryKey: ['fabric', 'fullData', userId, userAlias],
-    queryFn: () => fetchFabricData(token!, userId!, userAlias!),
-    enabled: enabled && !!token && !!userId && !!userAlias,
+    queryKey: ['fabric', 'fullData', userId, userAlias, userName],
+    queryFn: () => fetchFabricData(token!, userId!, userAlias!, userName!),
+    enabled: enabled && !!token && !!userId && !!userAlias && !!userName,
     staleTime: 5 * 60 * 1000,
     retry: 2,
   })

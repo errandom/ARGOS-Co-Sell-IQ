@@ -106,7 +106,7 @@ app.post('/api/fabric/accounts', async (req, res) => {
  */
 app.post('/api/fabric/data', async (req, res) => {
   try {
-    const { userId, userAlias } = req.body
+    const { userId, userAlias, userName } = req.body
 
     if (!userId) {
       return res.status(400).json({ message: 'userId is required' })
@@ -114,11 +114,14 @@ app.post('/api/fabric/data', async (req, res) => {
     if (!userAlias) {
       return res.status(400).json({ message: 'userAlias is required' })
     }
+    if (!userName) {
+      return res.status(400).json({ message: 'userName is required' })
+    }
 
     // Execute all queries in parallel
     const [accounts, ownedOpportunities, dealTeamOpportunities, relatedAccountOpportunities, partnerEngagements] = await Promise.all([
       getAccountsByUser(userAlias),
-      getOwnedOpportunities(userId),
+      getOwnedOpportunities(userId, userName),
       getDealTeamOpportunities(userId),
       getRelatedAccountOpportunities(userId),
       getPartnerEngagements(userId),
@@ -169,10 +172,20 @@ async function getAccountsByUser(userAlias) {
 }
 
 /**
- * Query: Get all opportunities owned by the user
+ * Query: Get all opportunities owned by the user.
+ * Primary matching is done by "Opportunity User Owner" using authenticated name
+ * in both "First Last" and "Last, First" forms. ID_owner remains as fallback.
  */
-async function getOwnedOpportunities(userId) {
+async function getOwnedOpportunities(userId, userName) {
   try {
+    const ownerName = userName.trim().toLowerCase().replace(/\s+/g, ' ')
+    const nameParts = ownerName.split(' ').filter(Boolean)
+    const firstName = nameParts[0] || ''
+    const remainingNames = nameParts.slice(1).join(' ')
+    const reversedName = remainingNames && firstName
+      ? `${remainingNames}, ${firstName}`
+      : ownerName
+
     const query = `
       SELECT 
         o.[ID_opportunity],
@@ -198,12 +211,17 @@ async function getOwnedOpportunities(userId) {
         o.[Opportunity User Owner],
         o.[Opportunity Date/Time Last Modified]
       FROM dbo.MSX_opportunities o
-      WHERE o.[ID_owner] = @userId
+      WHERE
+        LOWER(LTRIM(RTRIM(o.[Opportunity User Owner]))) = @ownerName
+        OR LOWER(LTRIM(RTRIM(o.[Opportunity User Owner]))) = @reversedOwnerName
+        OR o.[ID_owner] = @userId
       ORDER BY o.[Opportunity Est. Close Date] ASC
     `
 
     const request = pool.request()
     request.input('userId', sql.NVarChar, userId)
+    request.input('ownerName', sql.NVarChar, ownerName)
+    request.input('reversedOwnerName', sql.NVarChar, reversedName)
     const result = await request.query(query)
     return result.recordset
   } catch (error) {

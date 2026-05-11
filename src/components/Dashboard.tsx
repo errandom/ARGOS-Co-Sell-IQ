@@ -10,10 +10,12 @@ import {
   Users,
   AlertCircle,
   FileWarning,
+  X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { generateTopOpportunities } from '@/lib/mockData'
-import type { User } from '@/types'
+import { useFabricContext } from '@/lib/FabricContext'
+import type { Opportunity, User } from '@/types'
 
 interface DashboardProps {
   user: User
@@ -31,9 +33,29 @@ interface MetricCard {
   action?: () => void
 }
 
+type DashboardListView =
+  | 'opportunities-total'
+  | 'opportunities-owned'
+  | 'opportunities-deal-team'
+  | 'opportunities-account-associated'
+  | 'accounts-associated'
+  | null
+
 export function Dashboard({ user, onNavigate }: DashboardProps) {
   const [isLoading, setIsLoading] = useState(true)
+  const [selectedListView, setSelectedListView] = useState<DashboardListView>(null)
   const [opportunities] = useState(generateTopOpportunities())
+  const fabricData = useFabricContext()
+
+  const ownedOpportunities = fabricData.opportunities
+  const dealTeamOpportunities = fabricData.dealTeamOpportunities
+  const accountAssociatedOpportunities = fabricData.relatedAccountOpportunities
+  const associatedAccounts = fabricData.accounts
+
+  const totalOpportunityCount =
+    ownedOpportunities.length +
+    dealTeamOpportunities.length +
+    accountAssociatedOpportunities.length
 
   const topPartners = [
     { name: 'Accenture', opps: 8, value: 4200000 },
@@ -50,13 +72,40 @@ export function Dashboard({ user, onNavigate }: DashboardProps) {
 
   const metricCards: MetricCard[] = [
     {
-      title: 'Opportunities',
-      count: 42,
-      usd: '$18,450,000',
+      title: 'Opportunities (Total)',
+      count: totalOpportunityCount,
       icon: <TrendingUp className="w-5 h-5" />,
       color: 'text-blue-500',
-      clickable: false,
-      tooltip: 'All MSX opportunities you own or are part of the deal team',
+      clickable: true,
+      tooltip: 'Sum of opportunities you own, where you are deal team, and on your associated accounts',
+      action: () => setSelectedListView('opportunities-total'),
+    },
+    {
+      title: 'Opportunities You Own',
+      count: ownedOpportunities.length,
+      icon: <TrendingUp className="w-5 h-5" />,
+      color: 'text-emerald-500',
+      clickable: true,
+      tooltip: 'Opportunities where you are the owner',
+      action: () => setSelectedListView('opportunities-owned'),
+    },
+    {
+      title: 'Deal Team Opportunities',
+      count: dealTeamOpportunities.length,
+      icon: <Users className="w-5 h-5" />,
+      color: 'text-indigo-500',
+      clickable: true,
+      tooltip: 'Opportunities where you are on the deal team',
+      action: () => setSelectedListView('opportunities-deal-team'),
+    },
+    {
+      title: 'Associated Account Opportunities',
+      count: accountAssociatedOpportunities.length,
+      icon: <Building2 className="w-5 h-5" />,
+      color: 'text-cyan-500',
+      clickable: true,
+      tooltip: 'Opportunities on accounts associated with you',
+      action: () => setSelectedListView('opportunities-account-associated'),
     },
     {
       title: 'Inbound Partner Referrals',
@@ -91,11 +140,12 @@ export function Dashboard({ user, onNavigate }: DashboardProps) {
     },
     {
       title: 'Accounts (Seller Scope)',
-      count: 23,
+      count: associatedAccounts.length,
       icon: <Building2 className="w-5 h-5" />,
       color: 'text-cyan-500',
-      clickable: false,
+      clickable: true,
       tooltip: 'Accounts assigned to you in SPM',
+      action: () => setSelectedListView('accounts-associated'),
     },
     {
       title: 'Distinct Partners',
@@ -140,6 +190,162 @@ export function Dashboard({ user, onNavigate }: DashboardProps) {
     }).format(value)
   }
 
+  const getOpportunityTitle = (opportunity: Opportunity) => {
+    return (
+      opportunity['Opportunity Title'] ||
+      opportunity['Opportunity Number'] ||
+      opportunity.ID_opportunity
+    )
+  }
+
+  const getOpportunityAccount = (opportunity: Opportunity) => {
+    return opportunity['Opportunity Account'] || opportunity['Opportunity Customer'] || '-'
+  }
+
+  const getOpportunityOwner = (opportunity: Opportunity) => {
+    return opportunity['Opportunity User Owner'] || opportunity.ID_owner || '-'
+  }
+
+  const renderOpportunityList = (items: Opportunity[], emptyMessage: string) => {
+    if (items.length === 0) {
+      return <p className="text-sm text-muted-foreground">{emptyMessage}</p>
+    }
+
+    return (
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <table className="w-full">
+          <thead className="bg-muted/40">
+            <tr>
+              <th className="text-left px-4 py-2 text-xs font-semibold text-muted-foreground uppercase">Opportunity</th>
+              <th className="text-left px-4 py-2 text-xs font-semibold text-muted-foreground uppercase">Account</th>
+              <th className="text-left px-4 py-2 text-xs font-semibold text-muted-foreground uppercase">Owner</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item) => (
+              <tr key={item.ID_opportunity} className="border-t border-border/60">
+                <td className="px-4 py-3 text-sm text-foreground">{getOpportunityTitle(item)}</td>
+                <td className="px-4 py-3 text-sm text-muted-foreground">{getOpportunityAccount(item)}</td>
+                <td className="px-4 py-3 text-sm text-muted-foreground">{getOpportunityOwner(item)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
+
+  const renderSelectedListView = () => {
+    if (!selectedListView) return null
+
+    if (selectedListView === 'accounts-associated') {
+      return (
+        <Card className="p-6 bg-card border border-border space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-xl font-semibold text-[oklch(0.33_0.09_252)]">Associated Accounts</h2>
+            <button
+              onClick={() => setSelectedListView(null)}
+              className="p-2 rounded-md hover:bg-muted/50 text-muted-foreground hover:text-foreground"
+              aria-label="Close account list"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          {associatedAccounts.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No associated accounts found for your user profile.</p>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-border">
+              <table className="w-full">
+                <thead className="bg-muted/40">
+                  <tr>
+                    <th className="text-left px-4 py-2 text-xs font-semibold text-muted-foreground uppercase">Account</th>
+                    <th className="text-left px-4 py-2 text-xs font-semibold text-muted-foreground uppercase">Account ID</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {associatedAccounts.map((account) => (
+                    <tr key={account.ID_account} className="border-t border-border/60">
+                      <td className="px-4 py-3 text-sm text-foreground">{String(account['MSX Account'] || account['SPM Account Name'] || account.ID_account)}</td>
+                      <td className="px-4 py-3 text-sm text-muted-foreground">{account.ID_account}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      )
+    }
+
+    if (selectedListView === 'opportunities-total') {
+      return (
+        <Card className="p-6 bg-card border border-border space-y-6">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-xl font-semibold text-[oklch(0.33_0.09_252)]">Opportunities Breakdown</h2>
+            <button
+              onClick={() => setSelectedListView(null)}
+              className="p-2 rounded-md hover:bg-muted/50 text-muted-foreground hover:text-foreground"
+              aria-label="Close opportunity list"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-sm font-semibold text-foreground">1. Opportunities You Own ({ownedOpportunities.length})</h3>
+            {renderOpportunityList(ownedOpportunities, 'No owned opportunities found.')}
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-sm font-semibold text-foreground">2. Deal Team Opportunities ({dealTeamOpportunities.length})</h3>
+            {renderOpportunityList(dealTeamOpportunities, 'No deal team opportunities found.')}
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-sm font-semibold text-foreground">3. Associated Account Opportunities ({accountAssociatedOpportunities.length})</h3>
+            {renderOpportunityList(accountAssociatedOpportunities, 'No account-associated opportunities found.')}
+          </div>
+        </Card>
+      )
+    }
+
+    const listConfig: Record<Exclude<DashboardListView, null | 'opportunities-total' | 'accounts-associated'>, { title: string; items: Opportunity[]; empty: string }> = {
+      'opportunities-owned': {
+        title: 'Opportunities You Own',
+        items: ownedOpportunities,
+        empty: 'No owned opportunities found.',
+      },
+      'opportunities-deal-team': {
+        title: 'Deal Team Opportunities',
+        items: dealTeamOpportunities,
+        empty: 'No deal team opportunities found.',
+      },
+      'opportunities-account-associated': {
+        title: 'Associated Account Opportunities',
+        items: accountAssociatedOpportunities,
+        empty: 'No account-associated opportunities found.',
+      },
+    }
+
+    const config = listConfig[selectedListView]
+
+    return (
+      <Card className="p-6 bg-card border border-border space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-xl font-semibold text-[oklch(0.33_0.09_252)]">{config.title}</h2>
+          <button
+            onClick={() => setSelectedListView(null)}
+            className="p-2 rounded-md hover:bg-muted/50 text-muted-foreground hover:text-foreground"
+            aria-label="Close opportunity list"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        {renderOpportunityList(config.items, config.empty)}
+      </Card>
+    )
+  }
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background">
@@ -166,6 +372,9 @@ export function Dashboard({ user, onNavigate }: DashboardProps) {
         <div className="space-y-1">
           <h1 className="text-3xl font-bold text-[oklch(0.33_0.09_252)]">Welcome back, {user.name.split(' ')[0]}</h1>
           <p className="text-muted-foreground">Here's your co-sell overview</p>
+          {fabricData.isLoading && (
+            <p className="text-xs text-muted-foreground">Loading account and opportunity breakdown...</p>
+          )}
         </div>
 
         <TooltipProvider>
@@ -200,6 +409,8 @@ export function Dashboard({ user, onNavigate }: DashboardProps) {
             ))}
           </div>
         </TooltipProvider>
+
+        {renderSelectedListView()}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card className="p-6 bg-card border border-border">
