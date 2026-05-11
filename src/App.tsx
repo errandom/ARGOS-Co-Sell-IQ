@@ -11,11 +11,38 @@ import { ScanningOverlay } from '@/components/ScanningOverlay'
 import { generatePipelineData } from '@/lib/mockData'
 import { runGraphScan } from '@/lib/graphService'
 import { loginRequest } from '@/lib/authConfig'
+import { FabricProvider, useFabricContext } from '@/lib/FabricContext'
 import type { User, ScanSettings, Detection } from '@/types'
 
 function App() {
   const { instance, accounts, inProgress } = useMsal()
   const isAuthenticated = useIsAuthenticated()
+
+  if (!isAuthenticated) {
+    return (
+      <>
+        <LandingPage
+          onSignIn={() => instance.loginRedirect(loginRequest)}
+          authInProgress={inProgress !== 'none'}
+        />
+        <Toaster position="bottom-right" theme="dark" />
+      </>
+    )
+  }
+
+  // Wrap authenticated content in FabricProvider so accounts load automatically
+  return (
+    <FabricProvider>
+      <AuthenticatedApp />
+    </FabricProvider>
+  )
+}
+
+/** Inner component rendered only when authenticated; has access to FabricContext */
+function AuthenticatedApp() {
+  const { instance, accounts: msalAccounts } = useMsal()
+  const fabricData = useFabricContext()
+
   const [currentView, setCurrentView] = useState('dashboard')
   const [hasScanRun, setHasScanRun] = useState(false)
   const [isScanning, setIsScanning] = useState(false)
@@ -40,12 +67,26 @@ function App() {
 
   // Sync user info from MSAL account
   useEffect(() => {
-    const activeAccount = instance.getActiveAccount() || accounts[0]
-    if (!activeAccount || !isAuthenticated) return
+    const activeAccount = instance.getActiveAccount() || msalAccounts[0]
+    if (!activeAccount) return
     const accountName = activeAccount.name || activeAccount.username || 'Authenticated User'
     const alias = (activeAccount.username || accountName).split('@')[0] || 'user'
     setUser({ name: accountName, alias, role: 'Enterprise Seller' })
-  }, [accounts, instance, isAuthenticated])
+  }, [msalAccounts, instance])
+
+  // Pre-select Fabric accounts in scan settings once loaded
+  useEffect(() => {
+    if (fabricData.accountsReady && fabricData.accounts.length > 0) {
+      const accountNames = fabricData.accounts
+        .map((a) => a['MSX Account'] ?? a.ID_account)
+        .filter(Boolean) as string[]
+      setScanSettings((prev) => ({
+        ...prev,
+        selectedAccounts: accountNames,
+      }))
+      console.log(`[Fabric] Loaded ${fabricData.accounts.length} account(s) for user`)
+    }
+  }, [fabricData.accountsReady, fabricData.accounts])
 
   // Apply theme class to <html>
   useEffect(() => {
@@ -59,11 +100,6 @@ function App() {
     }
   }, [scanSettings.theme])
 
-  const handleSignIn = async () => {
-    await instance.loginRedirect(loginRequest)
-    setCurrentView('dashboard')
-  }
-
   const handleSignOut = async () => {
     setCurrentView('dashboard')
     setHasScanRun(false)
@@ -72,7 +108,7 @@ function App() {
   }
 
   const handleStartScan = async () => {
-    const activeAccount = instance.getActiveAccount() || accounts[0]
+    const activeAccount = instance.getActiveAccount() || msalAccounts[0]
     if (!activeAccount) return
 
     setIsScanning(true)
@@ -100,18 +136,9 @@ function App() {
     )
   }
 
-  if (!isAuthenticated) {
-    return (
-      <>
-        <LandingPage onSignIn={handleSignIn} authInProgress={inProgress !== 'none'} />
-        <Toaster position="bottom-right" theme="dark" />
-      </>
-    )
-  }
-
   return (
     <>
-      <div className="min-h-screen bg-background font-sans">
+      <div className="min-h-screen bg-background font-sans app-shell-bg">
         <Navigation
           user={user}
           currentView={currentView}

@@ -164,7 +164,7 @@ export function Dashboard({ user, onNavigate }: DashboardProps) {
     <div className="min-h-screen bg-background animate-fade-in">
       <div className="max-w-[1280px] mx-auto px-6 py-8 space-y-8">
         <div className="space-y-1">
-          <h1 className="text-3xl font-bold text-white">Welcome back, {user.name.split(' ')[0]}</h1>
+          <h1 className="text-3xl font-bold text-[oklch(0.33_0.09_252)]">Welcome back, {user.name.split(' ')[0]}</h1>
           <p className="text-muted-foreground">Here's your co-sell overview</p>
         </div>
 
@@ -184,7 +184,7 @@ export function Dashboard({ user, onNavigate }: DashboardProps) {
                         <div className={card.color}>{card.icon}</div>
                       </div>
                       <div>
-                        <div className="text-3xl font-bold text-white">{card.count}</div>
+                        <div className="text-3xl font-bold text-[oklch(0.33_0.09_252)]">{card.count}</div>
                         {card.usd && (
                           <div className="text-sm font-medium text-green-500 mt-1">{card.usd}</div>
                         )}
@@ -203,7 +203,7 @@ export function Dashboard({ user, onNavigate }: DashboardProps) {
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card className="p-6 bg-card border border-border">
-            <h2 className="text-xl font-semibold text-white mb-4">Top 5 Partners</h2>
+            <h2 className="text-xl font-semibold text-[oklch(0.33_0.09_252)] mb-4">Top 5 Partners</h2>
             <div className="space-y-3">
               {topPartners.map((partner, index) => (
                 <div
@@ -214,7 +214,7 @@ export function Dashboard({ user, onNavigate }: DashboardProps) {
                     <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-semibold text-sm">
                       {index + 1}
                     </div>
-                    <span className="text-white font-medium">{partner.name}</span>
+                    <span className="text-foreground font-medium">{partner.name}</span>
                   </div>
                   <div className="text-right">
                     <div className="text-sm text-muted-foreground">{partner.opps} opps</div>
@@ -228,7 +228,7 @@ export function Dashboard({ user, onNavigate }: DashboardProps) {
           </Card>
 
           <Card className="p-6 bg-card border border-border">
-            <h2 className="text-xl font-semibold text-white mb-4">Top 15 Opportunities</h2>
+            <h2 className="text-xl font-semibold text-[oklch(0.33_0.09_252)] mb-4">Top 15 Opportunities</h2>
             <div className="max-h-[400px] overflow-y-auto space-y-2">
               {opportunities.map((opp, index) => (
                 <div
@@ -236,7 +236,7 @@ export function Dashboard({ user, onNavigate }: DashboardProps) {
                   className="flex items-start justify-between p-3 rounded-lg hover:bg-muted/20 transition-colors"
                 >
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium text-white truncate">{opp.name}</div>
+                    <div className="text-sm font-medium text-foreground truncate">{opp.name}</div>
                     <div className="text-xs text-muted-foreground">{opp.account}</div>
                   </div>
                   <div className="text-right ml-4">

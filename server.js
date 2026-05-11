@@ -74,29 +74,50 @@ function authenticate(req, res, next) {
   next()
 }
 
+// Health check endpoint (no auth required)
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'OK', connected: !!pool, timestamp: new Date().toISOString() })
+})
+
+// All routes below require authentication
 app.use(authenticate)
 
 /**
- * GET /api/fabric/data
+ * POST /api/fabric/accounts
+ * Load only the accounts for the authenticated user (lightweight, called on login)
+ */
+app.post('/api/fabric/accounts', async (req, res) => {
+  try {
+    const { userAlias } = req.body
+    if (!userAlias) {
+      return res.status(400).json({ message: 'userAlias is required' })
+    }
+    const accounts = await getAccountsByUser(userAlias)
+    res.json({ accounts })
+  } catch (error) {
+    console.error('Error fetching accounts:', error)
+    res.status(500).json({ message: 'Failed to fetch accounts', error: error.message })
+  }
+})
+
+/**
+ * POST /api/fabric/data
  * Fetch all Fabric data for the authenticated user
- * 
- * Request body:
- * {
- *   userId: string,
- *   userEmail?: string
- * }
  */
 app.post('/api/fabric/data', async (req, res) => {
   try {
-    const { userId } = req.body
+    const { userId, userAlias } = req.body
 
     if (!userId) {
       return res.status(400).json({ message: 'userId is required' })
     }
+    if (!userAlias) {
+      return res.status(400).json({ message: 'userAlias is required' })
+    }
 
     // Execute all queries in parallel
     const [accounts, ownedOpportunities, dealTeamOpportunities, relatedAccountOpportunities, partnerEngagements] = await Promise.all([
-      getAccountsByUser(userId),
+      getAccountsByUser(userAlias),
       getOwnedOpportunities(userId),
       getDealTeamOpportunities(userId),
       getRelatedAccountOpportunities(userId),
@@ -119,29 +140,26 @@ app.post('/api/fabric/data', async (req, res) => {
 })
 
 /**
- * Query: Get all accounts related to the user
+ * Query: Get all accounts related to the user alias from SPM account assignments.
+ * Note: SPM account IDs currently do not correlate to MSX account IDs.
  */
-async function getAccountsByUser(userId) {
+async function getAccountsByUser(userAlias) {
   try {
     const query = `
       SELECT 
-        a.[AccountId],
-        a.[AccountName],
-        a.[AccountReference],
-        a.[Industry],
-        a.[Revenue],
-        a.[EmployeeCount],
-        a.[Location],
-        a.[Website],
-        a.[LastModifiedDate]
-      FROM [Accounts] a
-      INNER JOIN [UserAccounts] ua ON a.[AccountId] = ua.[AccountId]
-      WHERE ua.[UserId] = @userId
-      ORDER BY a.[LastModifiedDate] DESC
+        a.*
+      FROM dbo.SPM_accounts a
+      WHERE EXISTS (
+        SELECT 1
+        FROM dbo.SPM_accountassignments aa
+        WHERE aa.[ID_account] = a.[ID_account]
+          AND LOWER(LTRIM(RTRIM(aa.[SPM Account Assignment User Alias]))) = @userAlias
+      )
+      ORDER BY a.[ID_account]
     `
 
     const request = pool.request()
-    request.input('userId', sql.NVarChar, userId)
+    request.input('userAlias', sql.NVarChar, userAlias.trim().toLowerCase())
     const result = await request.query(query)
     return result.recordset
   } catch (error) {
@@ -157,23 +175,31 @@ async function getOwnedOpportunities(userId) {
   try {
     const query = `
       SELECT 
-        o.[OpportunityId],
-        o.[OpportunityName],
-        o.[AccountId],
-        a.[AccountName],
-        o.[OwnerId],
-        u.[UserName] as [OwnerName],
-        o.[DealValue],
-        o.[ForecastCategory],
-        o.[Stage],
-        o.[CloseDate],
-        o.[Description],
-        o.[LastModifiedDate]
-      FROM [Opportunities] o
-      INNER JOIN [Accounts] a ON o.[AccountId] = a.[AccountId]
-      LEFT JOIN [Users] u ON o.[OwnerId] = u.[UserId]
-      WHERE o.[OwnerId] = @userId
-      ORDER BY o.[CloseDate] ASC
+        o.[ID_opportunity],
+        o.[ID_account],
+        o.[ID_owner],
+        o.[Opportunity Number],
+        o.[Opportunity Title],
+        o.[Opportunity Account],
+        o.[Opportunity Customer],
+        o.[Opportunity State],
+        o.[Opportunity Status],
+        o.[Opportunity Rating],
+        o.[Opportunity MCEM Stage Name],
+        o.[Opportunity Solution Area],
+        o.[Opportunity Solution Play],
+        o.[Opportunity Est. Deal Value (USD)],
+        o.[Opportunity Act. Deal Value (USD)],
+        o.[Opportunity Tot. Deal Value (USD)],
+        o.[Opportunity Est. Close Date],
+        o.[Opportunity Act. Close Date],
+        o.[Opportunity Primary Partner],
+        o.[Opportunity Partner Co-Sell],
+        o.[Opportunity User Owner],
+        o.[Opportunity Date/Time Last Modified]
+      FROM dbo.MSX_opportunities o
+      WHERE o.[ID_owner] = @userId
+      ORDER BY o.[Opportunity Est. Close Date] ASC
     `
 
     const request = pool.request()
@@ -193,24 +219,33 @@ async function getDealTeamOpportunities(userId) {
   try {
     const query = `
       SELECT 
-        o.[OpportunityId],
-        o.[OpportunityName],
-        o.[AccountId],
-        a.[AccountName],
-        o.[OwnerId],
-        u.[UserName] as [OwnerName],
-        o.[DealValue],
-        o.[ForecastCategory],
-        o.[Stage],
-        o.[CloseDate],
-        o.[Description],
-        o.[LastModifiedDate]
-      FROM [Opportunities] o
-      INNER JOIN [Accounts] a ON o.[AccountId] = a.[AccountId]
-      LEFT JOIN [Users] u ON o.[OwnerId] = u.[UserId]
-      INNER JOIN [DealTeam] dt ON o.[OpportunityId] = dt.[OpportunityId]
-      WHERE dt.[UserId] = @userId AND o.[OwnerId] != @userId
-      ORDER BY o.[CloseDate] ASC
+        o.[ID_opportunity],
+        o.[ID_account],
+        o.[ID_owner],
+        o.[Opportunity Number],
+        o.[Opportunity Title],
+        o.[Opportunity Account],
+        o.[Opportunity Customer],
+        o.[Opportunity State],
+        o.[Opportunity Status],
+        o.[Opportunity Rating],
+        o.[Opportunity MCEM Stage Name],
+        o.[Opportunity Solution Area],
+        o.[Opportunity Solution Play],
+        o.[Opportunity Est. Deal Value (USD)],
+        o.[Opportunity Act. Deal Value (USD)],
+        o.[Opportunity Tot. Deal Value (USD)],
+        o.[Opportunity Est. Close Date],
+        o.[Opportunity Act. Close Date],
+        o.[Opportunity Primary Partner],
+        o.[Opportunity Partner Co-Sell],
+        o.[Opportunity User Owner],
+        o.[Opportunity Date/Time Last Modified],
+        dt.[Opportunity Deal Team User]
+      FROM dbo.MSX_opportunities o
+      INNER JOIN dbo.MSX_opportunitydealteam dt ON o.[ID_opportunity] = dt.[ID_opportunity]
+      WHERE dt.[ID_owner] = @userId AND o.[ID_owner] != @userId
+      ORDER BY o.[Opportunity Est. Close Date] ASC
     `
 
     const request = pool.request()
@@ -224,35 +259,43 @@ async function getDealTeamOpportunities(userId) {
 }
 
 /**
- * Query: Get opportunities related to accounts the user is related to
+ * Query: Get opportunities related to accounts the user owns
  */
 async function getRelatedAccountOpportunities(userId) {
   try {
     const query = `
       SELECT 
-        o.[OpportunityId],
-        o.[OpportunityName],
-        o.[AccountId],
-        a.[AccountName],
-        o.[OwnerId],
-        u.[UserName] as [OwnerName],
-        o.[DealValue],
-        o.[ForecastCategory],
-        o.[Stage],
-        o.[CloseDate],
-        o.[Description],
-        o.[LastModifiedDate]
-      FROM [Opportunities] o
-      INNER JOIN [Accounts] a ON o.[AccountId] = a.[AccountId]
-      LEFT JOIN [Users] u ON o.[OwnerId] = u.[UserId]
-      WHERE a.[AccountId] IN (
-        SELECT [AccountId] FROM [UserAccounts] WHERE [UserId] = @userId
+        o.[ID_opportunity],
+        o.[ID_account],
+        o.[ID_owner],
+        o.[Opportunity Number],
+        o.[Opportunity Title],
+        o.[Opportunity Account],
+        o.[Opportunity Customer],
+        o.[Opportunity State],
+        o.[Opportunity Status],
+        o.[Opportunity Rating],
+        o.[Opportunity MCEM Stage Name],
+        o.[Opportunity Solution Area],
+        o.[Opportunity Solution Play],
+        o.[Opportunity Est. Deal Value (USD)],
+        o.[Opportunity Act. Deal Value (USD)],
+        o.[Opportunity Tot. Deal Value (USD)],
+        o.[Opportunity Est. Close Date],
+        o.[Opportunity Act. Close Date],
+        o.[Opportunity Primary Partner],
+        o.[Opportunity Partner Co-Sell],
+        o.[Opportunity User Owner],
+        o.[Opportunity Date/Time Last Modified]
+      FROM dbo.MSX_opportunities o
+      WHERE o.[ID_account] IN (
+        SELECT [ID_account] FROM dbo.MSX_accounts WHERE [ID_owner] = @userId
       )
-      AND o.[OwnerId] != @userId
-      AND o.[OpportunityId] NOT IN (
-        SELECT [OpportunityId] FROM [DealTeam] WHERE [UserId] = @userId
+      AND o.[ID_owner] != @userId
+      AND o.[ID_opportunity] NOT IN (
+        SELECT [ID_opportunity] FROM dbo.MSX_opportunitydealteam WHERE [ID_owner] = @userId
       )
-      ORDER BY o.[CloseDate] ASC
+      ORDER BY o.[Opportunity Est. Close Date] ASC
     `
 
     const request = pool.request()
@@ -272,31 +315,42 @@ async function getPartnerEngagements(userId) {
   try {
     const query = `
       SELECT 
-        pe.[EngagementId],
-        pe.[EngagementName],
-        pe.[EngagementType],
-        pe.[RelatedAccountId],
-        a.[AccountName] as [RelatedAccountName],
-        pe.[RelatedOpportunityId],
-        o.[OpportunityName] as [RelatedOpportunityName],
-        pe.[RelatedUserId],
-        u.[UserName] as [RelatedUserName],
-        pe.[Status],
-        pe.[CreatedDate],
-        pe.[LastModifiedDate]
-      FROM [PartnerEngagements] pe
-      LEFT JOIN [Accounts] a ON pe.[RelatedAccountId] = a.[AccountId]
-      LEFT JOIN [Opportunities] o ON pe.[RelatedOpportunityId] = o.[OpportunityId]
-      LEFT JOIN [Users] u ON pe.[RelatedUserId] = u.[UserId]
+        pe.[ID_partnerengagement],
+        pe.[ID_opportunity],
+        pe.[ID_account],
+        pe.[ID_partner],
+        pe.[ID_owner],
+        pe.[Partner Engagement Title],
+        pe.[Partner Engagement Type],
+        pe.[Partner Engagement Direction],
+        pe.[Partner Engagement Status],
+        pe.[Partner Engagement Substatus],
+        pe.[Partner Engagement Partner Name],
+        pe.[Partner Engagement Partner Organization],
+        pe.[Partner Engagement Customer Name (per Partner)],
+        pe.[Partner Engagement Solution Area],
+        pe.[Partner Engagement Solution Play],
+        pe.[Partner Engagement Deal Value (USD)],
+        pe.[Partner Engagement Closing Date],
+        pe.[Partner Engagement Date/Time Creation],
+        pe.[Partner Engagement Date/Time Last Modified],
+        pe.[Referral Acceptance],
+        pe.[Referral Outcome],
+        pe.[Partner Engagement Call to Action],
+        o.[Opportunity Title] AS [RelatedOpportunityTitle]
+      FROM dbo.MSX_partnerreferrals pe
+      LEFT JOIN dbo.MSX_opportunities o ON pe.[ID_opportunity] = o.[ID_opportunity]
       WHERE 
-        pe.[RelatedUserId] = @userId
-        OR pe.[RelatedAccountId] IN (SELECT [AccountId] FROM [UserAccounts] WHERE [UserId] = @userId)
-        OR pe.[RelatedOpportunityId] IN (
-          SELECT [OpportunityId] FROM [Opportunities] WHERE [OwnerId] = @userId
-          UNION
-          SELECT [OpportunityId] FROM [DealTeam] WHERE [UserId] = @userId
+        pe.[ID_owner] = @userId
+        OR pe.[ID_account] IN (
+          SELECT [ID_account] FROM dbo.MSX_accounts WHERE [ID_owner] = @userId
         )
-      ORDER BY pe.[LastModifiedDate] DESC
+        OR pe.[ID_opportunity] IN (
+          SELECT [ID_opportunity] FROM dbo.MSX_opportunities WHERE [ID_owner] = @userId
+          UNION
+          SELECT [ID_opportunity] FROM dbo.MSX_opportunitydealteam WHERE [ID_owner] = @userId
+        )
+      ORDER BY pe.[Partner Engagement Date/Time Last Modified] DESC
     `
 
     const request = pool.request()
@@ -308,11 +362,6 @@ async function getPartnerEngagements(userId) {
     return []
   }
 }
-
-// Health check endpoint
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() })
-})
 
 // Error handling middleware
 app.use((err, req, res, next) => {

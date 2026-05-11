@@ -15,7 +15,7 @@
  *    const { data } = useFabricData(userId)
  */
 
-import { useFabricContext, useFabricAccounts, useFabricOpportunities, useFabricPartnerEngagements } from '@/lib/FabricContext'
+import { useFabricContext } from '@/lib/FabricContext'
 import type { FabricData } from '@/types'
 
 interface FabricDataDisplayProps {
@@ -38,7 +38,7 @@ export function FabricDataDisplay({
   try {
     const context = useFabricContext()
     useContext = true
-    contextData = context.fabricData
+    contextData = context
     contextLoading = context.isLoading
     contextError = context.error
   } catch {
@@ -248,20 +248,17 @@ export function FabricDataDisplay({
 }
 
 /**
- * Alternative: Using individual hooks
+ * Alternative: Using the context directly
  */
 export function FabricDataDisplayHooks() {
-  const accounts = useFabricAccounts()
-  const opportunities = useFabricOpportunities()
-  const engagements = useFabricPartnerEngagements()
-  const { isLoading, error } = useFabricContext()
+  const { accounts, opportunities, partnerEngagements, isLoading, error } = useFabricContext()
 
   return (
     <div>
-      <h1>Fabric Data (Using Hooks)</h1>
+      <h1>Fabric Data (Using Context)</h1>
       <p>Accounts: {accounts.length}</p>
-      <p>Opportunities: {opportunities.all.length}</p>
-      <p>Engagements: {engagements.length}</p>
+      <p>Opportunities: {opportunities.length}</p>
+      <p>Engagements: {partnerEngagements.length}</p>
       {error && <p className="text-red-600">Error: {error}</p>}
       {isLoading && <p>Loading...</p>}
     </div>
