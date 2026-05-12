@@ -129,6 +129,7 @@ app.use(authenticate)
 app.post('/api/fabric/accounts', async (req, res) => {
   try {
     const { userAlias } = req.body
+    console.log('[POST /api/fabric/accounts] Received request with userAlias:', userAlias)
     if (!userAlias) {
       return res.status(400).json({ message: 'userAlias is required' })
     }
@@ -148,6 +149,8 @@ app.post('/api/fabric/data', async (req, res) => {
   try {
     const { userId, userAlias, userName } = req.body
 
+    console.log('[POST /api/fabric/data] Received request with userId:', userId, 'userAlias:', userAlias, 'userName:', userName)
+
     if (!userId) {
       return res.status(400).json({ message: 'userId is required' })
     }
@@ -162,10 +165,12 @@ app.post('/api/fabric/data', async (req, res) => {
     const [accounts, ownedOpportunities, dealTeamOpportunities, relatedAccountOpportunities, partnerEngagements] = await Promise.all([
       getAccountsByUser(userAlias),
       getOwnedOpportunities(userId, userName),
-      getDealTeamOpportunities(userId),
-      getRelatedAccountOpportunities(userId),
+      getDealTeamOpportunities(userName),
+      getRelatedAccountOpportunities(userAlias),
       getPartnerEngagements(userId),
     ])
+
+    console.log('[POST /api/fabric/data] Query summary: accounts=', accounts.length, 'owned=', ownedOpportunities.length, 'dealTeam=', dealTeamOpportunities.length, 'relatedAccount=', relatedAccountOpportunities.length, 'partnerEngagements=', partnerEngagements.length)
 
     res.json({
       accounts,
@@ -183,27 +188,36 @@ app.post('/api/fabric/data', async (req, res) => {
 })
 
 /**
- * Query: Get all accounts related to the user alias from SPM account assignments.
- * Note: SPM account IDs currently do not correlate to MSX account IDs.
+ * Query: Get all accounts related to the user alias.
+ * Canonical bridge: MSX_accounts.[MSX Account Number] = SPM_accountassignments.[SPM Account Number].
  */
 async function getAccountsByUser(userAlias) {
   try {
+    console.log('[getAccountsByUser] Searching with userAlias:', userAlias)
+
     const query = `
-      SELECT 
-        a.*
-      FROM dbo.SPM_accounts a
-      WHERE EXISTS (
-        SELECT 1
-        FROM dbo.SPM_accountassignments aa
-        WHERE aa.[ID_account] = a.[ID_account]
-          AND LOWER(LTRIM(RTRIM(aa.[SPM Account Assignment User Alias]))) = @userAlias
-      )
-      ORDER BY a.[ID_account]
+      SELECT DISTINCT
+        COALESCE(ma.[ID_account], sa.[ID_account]) AS [ID_account],
+        ma.[MSX Account Number],
+        ma.[MSX Account],
+        aa.[SPM Account],
+        ma.[MSX Account Country],
+        ma.[MSX Account Owner],
+        aa.[SPM Account Assignment User Alias],
+        aa.[SPM Account Assignment User Role Summary]
+      FROM dbo.SPM_accountassignments aa
+      LEFT JOIN dbo.SPM_accounts sa
+        ON sa.[ID_account] = aa.[ID_account]
+      LEFT JOIN dbo.MSX_accounts ma
+        ON ma.[MSX Account Number] = aa.[SPM Account Number]
+      WHERE LOWER(LTRIM(RTRIM(aa.[SPM Account Assignment User Alias]))) = @userAlias
+      ORDER BY ma.[MSX Account Number], aa.[SPM Account]
     `
 
     const request = pool.request()
     request.input('userAlias', sql.NVarChar, userAlias.trim().toLowerCase())
     const result = await request.query(query)
+    console.log('[getAccountsByUser] Found', result.recordset.length, 'accounts')
     return result.recordset
   } catch (error) {
     console.error('Error in getAccountsByUser:', error)
@@ -213,8 +227,7 @@ async function getAccountsByUser(userAlias) {
 
 /**
  * Query: Get all opportunities owned by the user.
- * Primary matching is done by "Opportunity User Owner" using authenticated name
- * in both "First Last" and "Last, First" forms. ID_owner remains as fallback.
+ * Match by Opportunity User Owner using authenticated user name.
  */
 async function getOwnedOpportunities(userId, userName) {
   try {
@@ -225,6 +238,8 @@ async function getOwnedOpportunities(userId, userName) {
     const reversedName = remainingNames && firstName
       ? `${remainingNames}, ${firstName}`
       : ownerName
+
+    console.log('[getOwnedOpportunities] Searching with userId:', userId, 'ownerName:', ownerName, 'reversedName:', reversedName)
 
     const query = `
       SELECT 
@@ -254,7 +269,6 @@ async function getOwnedOpportunities(userId, userName) {
       WHERE
         LOWER(LTRIM(RTRIM(o.[Opportunity User Owner]))) = @ownerName
         OR LOWER(LTRIM(RTRIM(o.[Opportunity User Owner]))) = @reversedOwnerName
-        OR o.[ID_owner] = @userId
       ORDER BY o.[Opportunity Est. Close Date] ASC
     `
 
@@ -263,6 +277,7 @@ async function getOwnedOpportunities(userId, userName) {
     request.input('ownerName', sql.NVarChar, ownerName)
     request.input('reversedOwnerName', sql.NVarChar, reversedName)
     const result = await request.query(query)
+    console.log('[getOwnedOpportunities] Found', result.recordset.length, 'opportunities')
     return result.recordset
   } catch (error) {
     console.error('Error in getOwnedOpportunities:', error)
@@ -271,12 +286,16 @@ async function getOwnedOpportunities(userId, userName) {
 }
 
 /**
- * Query: Get opportunities where user is part of the deal team
+ * Query: Get opportunities where user is part of the deal team.
+ * Match by Opportunity Deal Team User using authenticated user name.
  */
-async function getDealTeamOpportunities(userId) {
+async function getDealTeamOpportunities(userName) {
   try {
+    const normalizedUserName = userName.trim().toLowerCase().replace(/\s+/g, ' ')
+    console.log('[getDealTeamOpportunities] Searching with userName:', normalizedUserName)
+
     const query = `
-      SELECT 
+      SELECT DISTINCT
         o.[ID_opportunity],
         o.[ID_account],
         o.[ID_owner],
@@ -302,13 +321,15 @@ async function getDealTeamOpportunities(userId) {
         dt.[Opportunity Deal Team User]
       FROM dbo.MSX_opportunities o
       INNER JOIN dbo.MSX_opportunitydealteam dt ON o.[ID_opportunity] = dt.[ID_opportunity]
-      WHERE dt.[ID_owner] = @userId AND o.[ID_owner] != @userId
+      WHERE LOWER(LTRIM(RTRIM(dt.[Opportunity Deal Team User]))) = @userName
+        AND LOWER(LTRIM(RTRIM(o.[Opportunity User Owner]))) <> @userName
       ORDER BY o.[Opportunity Est. Close Date] ASC
     `
 
     const request = pool.request()
-    request.input('userId', sql.NVarChar, userId)
+    request.input('userName', sql.NVarChar, normalizedUserName)
     const result = await request.query(query)
+    console.log('[getDealTeamOpportunities] Found', result.recordset.length, 'opportunities')
     return result.recordset
   } catch (error) {
     console.error('Error in getDealTeamOpportunities:', error)
@@ -317,12 +338,16 @@ async function getDealTeamOpportunities(userId) {
 }
 
 /**
- * Query: Get opportunities related to accounts the user owns
+ * Query: Get opportunities related to accounts assigned to the user's alias.
+ * Uses SPM Account Number to MSX Account Number correlation.
  */
-async function getRelatedAccountOpportunities(userId) {
+async function getRelatedAccountOpportunities(userAlias) {
   try {
+    const normalizedAlias = userAlias.trim().toLowerCase()
+    console.log('[getRelatedAccountOpportunities] Searching with userAlias:', normalizedAlias)
+
     const query = `
-      SELECT 
+      SELECT DISTINCT
         o.[ID_opportunity],
         o.[ID_account],
         o.[ID_owner],
@@ -345,20 +370,22 @@ async function getRelatedAccountOpportunities(userId) {
         o.[Opportunity Partner Co-Sell],
         o.[Opportunity User Owner],
         o.[Opportunity Date/Time Last Modified]
-      FROM dbo.MSX_opportunities o
-      WHERE o.[ID_account] IN (
-        SELECT [ID_account] FROM dbo.MSX_accounts WHERE [ID_owner] = @userId
-      )
-      AND o.[ID_owner] != @userId
-      AND o.[ID_opportunity] NOT IN (
-        SELECT [ID_opportunity] FROM dbo.MSX_opportunitydealteam WHERE [ID_owner] = @userId
-      )
+      FROM dbo.SPM_accountassignments aa
+      LEFT JOIN dbo.SPM_accounts sa
+        ON sa.[ID_account] = aa.[ID_account]
+      LEFT JOIN dbo.MSX_accounts ma
+        ON ma.[MSX Account Number] = aa.[SPM Account Number]
+      LEFT JOIN dbo.MSX_opportunities o
+        ON o.[ID_account] = ma.[ID_account]
+      WHERE LOWER(LTRIM(RTRIM(aa.[SPM Account Assignment User Alias]))) = @userAlias
+        AND o.[ID_opportunity] IS NOT NULL
       ORDER BY o.[Opportunity Est. Close Date] ASC
     `
 
     const request = pool.request()
-    request.input('userId', sql.NVarChar, userId)
+    request.input('userAlias', sql.NVarChar, normalizedAlias)
     const result = await request.query(query)
+    console.log('[getRelatedAccountOpportunities] Found', result.recordset.length, 'opportunities')
     return result.recordset
   } catch (error) {
     console.error('Error in getRelatedAccountOpportunities:', error)
@@ -371,6 +398,8 @@ async function getRelatedAccountOpportunities(userId) {
  */
 async function getPartnerEngagements(userId) {
   try {
+    console.log('[getPartnerEngagements] Searching with userId:', userId)
+
     const query = `
       SELECT 
         pe.[ID_partnerengagement],
@@ -414,6 +443,7 @@ async function getPartnerEngagements(userId) {
     const request = pool.request()
     request.input('userId', sql.NVarChar, userId)
     const result = await request.query(query)
+    console.log('[getPartnerEngagements] Found', result.recordset.length, 'partner engagements')
     return result.recordset
   } catch (error) {
     console.error('Error in getPartnerEngagements:', error)
