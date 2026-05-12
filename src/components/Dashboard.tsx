@@ -21,7 +21,7 @@ import {
 import { toast } from 'sonner'
 import { generateTopOpportunities } from '@/lib/mockData'
 import { useFabricContext } from '@/lib/FabricContext'
-import type { Opportunity, User } from '@/types'
+import type { Opportunity, PartnerEngagement, User } from '@/types'
 
 interface DashboardProps {
   user: User
@@ -62,6 +62,70 @@ export function Dashboard({ user, onNavigate }: DashboardProps) {
     dealTeamOpportunities.length +
     accountAssociatedOpportunities.length
 
+  const parseDealValue = (value: unknown): number => {
+    if (typeof value === 'number' && Number.isFinite(value)) return value
+    if (typeof value === 'string') {
+      const cleaned = value.replace(/[^\d.-]/g, '')
+      const parsed = Number(cleaned)
+      return Number.isFinite(parsed) ? parsed : 0
+    }
+    return 0
+  }
+
+  const getOpportunityDealValue = (opportunity: Opportunity): number => {
+    return (
+      parseDealValue(opportunity['Opportunity Tot. Deal Value (USD)']) ||
+      parseDealValue(opportunity['Opportunity Est. Deal Value (USD)']) ||
+      parseDealValue(opportunity['Opportunity Act. Deal Value (USD)'])
+    )
+  }
+
+  const totalOpportunityDealValue = [
+    ...ownedOpportunities,
+    ...dealTeamOpportunities,
+    ...accountAssociatedOpportunities,
+  ].reduce((sum, item) => sum + getOpportunityDealValue(item), 0)
+
+  const partnerEngagements = fabricData.partnerEngagements
+
+  const hasOpportunityId = (engagement: PartnerEngagement): boolean => {
+    const rawId = engagement.ID_opportunity
+    return typeof rawId === 'string' ? rawId.trim().length > 0 : Boolean(rawId)
+  }
+
+  const isInboundReferral = (engagement: PartnerEngagement): boolean => {
+    const direction = String(engagement['Partner Engagement Direction'] || '').toLowerCase()
+    return direction.includes('inbound')
+  }
+
+  const isOutboundReferral = (engagement: PartnerEngagement): boolean => {
+    const direction = String(engagement['Partner Engagement Direction'] || '').toLowerCase()
+    return direction.includes('outbound')
+  }
+
+  const inboundPartnerReferrals = partnerEngagements.filter(
+    (engagement) => isInboundReferral(engagement) && !hasOpportunityId(engagement),
+  )
+
+  // Outbound includes all outbound referrals, regardless of opportunity linkage.
+  const outboundPartnerReferrals = partnerEngagements.filter((engagement) =>
+    isOutboundReferral(engagement),
+  )
+
+  const getEngagementDealValue = (engagement: PartnerEngagement): number => {
+    return parseDealValue(engagement['Partner Engagement Deal Value (USD)'])
+  }
+
+  const totalInboundReferralDealValue = inboundPartnerReferrals.reduce(
+    (sum, item) => sum + getEngagementDealValue(item),
+    0,
+  )
+
+  const totalOutboundReferralDealValue = outboundPartnerReferrals.reduce(
+    (sum, item) => sum + getEngagementDealValue(item),
+    0,
+  )
+
   const topPartners = [
     { name: 'Accenture', opps: 8, value: 4200000 },
     { name: 'Infosys', opps: 6, value: 3100000 },
@@ -86,30 +150,28 @@ export function Dashboard({ user, onNavigate }: DashboardProps) {
       tooltip: 'Sum of opportunities you own, where you are deal team, and on your associated accounts',
       breakdown: [
         { label: 'Owned', count: ownedOpportunities.length },
-        { label: 'Deal team', count: dealTeamOpportunities.length },
-        { label: 'Account-associated', count: accountAssociatedOpportunities.length },
+        { label: 'Part of Deal Team', count: dealTeamOpportunities.length },
+        { label: 'Related to My Accounts', count: accountAssociatedOpportunities.length },
       ],
       action: () => setSelectedListView('opportunities-total'),
     },
     {
       id: 'referrals-inbound',
       title: 'Inbound Partner Referrals',
-      count: 12,
-      usd: '$5,200,000',
+      count: inboundPartnerReferrals.length,
       icon: <ArrowDownToLine className="w-5 h-5" />,
       color: 'text-green-500',
       clickable: false,
-      tooltip: 'Opportunities with at least one inbound referral',
+      tooltip: 'Inbound referrals not yet associated to an opportunity ID (to avoid double counting).',
     },
     {
       id: 'referrals-outbound',
       title: 'Outbound Partner Referrals',
-      count: 8,
-      usd: '$3,100,000',
+      count: outboundPartnerReferrals.length,
       icon: <ArrowUpFromLine className="w-5 h-5" />,
       color: 'text-purple-500',
       clickable: false,
-      tooltip: 'Opportunities with at least one outbound referral',
+      tooltip: 'All outbound referrals, including those linked to opportunities.',
     },
     {
       id: 'primary-partner-mismatch',
@@ -336,9 +398,30 @@ export function Dashboard({ user, onNavigate }: DashboardProps) {
                         <div className={card.color}>{card.icon}</div>
                       </div>
                       <div>
-                        <div className="text-3xl font-bold text-[oklch(0.33_0.09_252)]">{card.count}</div>
-                        {card.usd && (
-                          <div className="text-sm font-medium text-green-500 mt-1">{card.usd}</div>
+                        {card.id === 'opportunities-total' || card.id === 'referrals-inbound' || card.id === 'referrals-outbound' ? (
+                          <div className="flex items-end justify-between gap-4">
+                            <div>
+                              <div className="text-xs text-muted-foreground">Total Deal Value</div>
+                              <div className="text-xl font-semibold text-green-600">
+                                {card.id === 'opportunities-total'
+                                  ? formatCurrency(totalOpportunityDealValue)
+                                  : card.id === 'referrals-inbound'
+                                    ? formatCurrency(totalInboundReferralDealValue)
+                                    : formatCurrency(totalOutboundReferralDealValue)}
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-xs text-muted-foreground">Count</div>
+                              <div className="text-3xl font-bold text-[oklch(0.33_0.09_252)]">{card.count}</div>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="text-3xl font-bold text-[oklch(0.33_0.09_252)]">{card.count}</div>
+                            {card.usd && (
+                              <div className="text-sm font-medium text-green-500 mt-1">{card.usd}</div>
+                            )}
+                          </>
                         )}
                       </div>
                       <div className="text-sm text-muted-foreground">{card.title}</div>
