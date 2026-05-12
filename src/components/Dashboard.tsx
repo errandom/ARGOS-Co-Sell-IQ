@@ -171,13 +171,22 @@ export function Dashboard({ user, onNavigate }: DashboardProps) {
       }
     }
 
-    void runHealthCheck()
+    // Run health check with a small delay to avoid blocking initial render
+    const timeoutId = setTimeout(() => {
+      runHealthCheck().catch((err) => {
+        console.error('Health check error:', err)
+      })
+    }, 500)
+
     const intervalId = window.setInterval(() => {
-      void runHealthCheck()
+      runHealthCheck().catch((err) => {
+        console.error('Health check error:', err)
+      })
     }, 60000)
 
     return () => {
       cancelled = true
+      clearTimeout(timeoutId)
       window.clearInterval(intervalId)
     }
   }, [])

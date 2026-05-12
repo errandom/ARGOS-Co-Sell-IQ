@@ -8,18 +8,30 @@ export function getApiBaseUrl() {
 }
 
 export async function checkApiHealth(): Promise<{ status: string; connected: boolean; timestamp?: string }> {
-  const res = await fetch(`${API_URL}/health`, {
-    method: 'GET',
-    headers: {
-      Accept: 'application/json',
-    },
-  })
+  try {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 5000)
 
-  if (!res.ok) {
-    throw new Error(`Health endpoint returned ${res.status}`)
+    const res = await fetch(`${API_URL}/health`, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+      },
+      signal: controller.signal,
+    })
+
+    clearTimeout(timeoutId)
+
+    if (!res.ok) {
+      throw new Error(`Health endpoint returned ${res.status}`)
+    }
+
+    const data = await res.json()
+    return data as { status: string; connected: boolean; timestamp?: string }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error'
+    throw new Error(`Health check failed: ${message}`)
   }
-
-  return res.json() as Promise<{ status: string; connected: boolean; timestamp?: string }>
 }
 
 async function fabricFetch<T>(path: string, token: string, body: Record<string, unknown>): Promise<T> {
