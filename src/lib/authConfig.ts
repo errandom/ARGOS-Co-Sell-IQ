@@ -51,3 +51,5 @@ export const loginRequest: RedirectRequest = {
 }
 
 export const apiScope = import.meta.env.VITE_AAD_API_SCOPE || ''
+export const fabricSqlScope =
+  (import.meta.env.VITE_FABRIC_SQL_SCOPE || 'https://database.windows.net//.default').trim()

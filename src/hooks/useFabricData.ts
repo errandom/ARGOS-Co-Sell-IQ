@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { useMsal, useIsAuthenticated } from '@azure/msal-react'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { fetchAccounts, fetchFabricData } from '@/lib/fabricService'
-import { apiScope } from '@/lib/authConfig'
+import { fabricSqlScope } from '@/lib/authConfig'
 import type { Account, FabricData } from '@/types'
 
 function deriveUserAlias(username?: string | null): string | null {
@@ -19,7 +19,7 @@ function deriveDisplayName(name?: string | null): string | null {
   return normalized || null
 }
 
-/** Acquire a token silently for the backend API */
+/** Acquire a delegated Fabric SQL access token for the signed-in user. */
 function useAuthToken() {
   const { instance, accounts } = useMsal()
   const isAuthenticated = useIsAuthenticated()
@@ -33,7 +33,7 @@ function useAuthToken() {
     const activeAccount = instance.getActiveAccount() || accounts[0]
     if (!activeAccount) return
 
-    const scopes = apiScope ? [apiScope] : ['User.Read']
+    const scopes = [fabricSqlScope]
 
     instance
       .acquireTokenSilent({ scopes, account: activeAccount })

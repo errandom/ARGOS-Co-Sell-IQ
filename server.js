@@ -1,18 +1,16 @@
 /**
  * Backend API Service for Fabric SQL Database Integration
- * 
+ *
  * SETUP INSTRUCTIONS:
  * 1. Install dependencies: npm install express mssql cors dotenv
- * 2. Create .env file with credentials:
+ * 2. Create .env file with Fabric SQL location:
  *    FABRIC_DB_SERVER=x6eps4xrq2xudenlfv6naeo3i4-ywxvf76w3u4e5gpdqvtoz57rsa.msit-database.fabric.microsoft.com
  *    FABRIC_DB_PORT=1433
  *    FABRIC_DB_NAME=ARGOS SQL-87da6cf7-5c29-48f5-9b97-b2a3245da352
- *    FABRIC_DB_USER={your_username}
- *    FABRIC_DB_PASSWORD={your_password}
  * 3. Run the server: node src/server.js
- * 
- * This service provides secure endpoints that handle database queries
- * and return only authorized data to the frontend.
+ *
+ * This service uses the signed-in user's delegated Microsoft Entra token
+ * to access Fabric SQL for prototype use cases.
  */
 
 import express from 'express'
@@ -43,59 +41,72 @@ if (hasBuiltFrontend) {
   app.use(express.static(distDir))
 }
 
-// Database configuration
-const dbConfig = {
+// Database configuration shared across all user-scoped connections.
+const baseDbConfig = {
   server: process.env.FABRIC_DB_SERVER || 'x6eps4xrq2xudenlfv6naeo3i4-ywxvf76w3u4e5gpdqvtoz57rsa.msit-database.fabric.microsoft.com',
   port: parseInt(process.env.FABRIC_DB_PORT || '1433'),
   database: process.env.FABRIC_DB_NAME || 'ARGOS SQL-87da6cf7-5c29-48f5-9b97-b2a3245da352',
-  authentication: {
-    type: 'default',
-    options: {
-      userName: process.env.FABRIC_DB_USER,
-      password: process.env.FABRIC_DB_PASSWORD,
-    },
+  pool: {
+    max: 5,
+    min: 0,
+    idleTimeoutMillis: 30000,
   },
   options: {
     encrypt: true,
     trustServerCertificate: false,
+    appName: 'ARGOS Co-Sell IQ',
   },
 }
 
-// SQL Pool
-let pool = null
-
-async function initializePool() {
-  try {
-    pool = new sql.ConnectionPool(dbConfig)
-    await pool.connect()
-    console.log('Connected to Fabric SQL Database')
-  } catch (err) {
-    console.error('Database connection error:', err)
+function buildUserScopedDbConfig(accessToken) {
+  return {
+    ...baseDbConfig,
+    authentication: {
+      type: 'azure-active-directory-access-token',
+      options: {
+        token: accessToken,
+      },
+    },
   }
 }
 
-// Authentication middleware (implement your auth logic here)
+async function createUserScopedPool(accessToken) {
+  const pool = new sql.ConnectionPool(buildUserScopedDbConfig(accessToken))
+  await pool.connect()
+  return pool
+}
+
 function authenticate(req, res, next) {
   const authHeader = req.headers.authorization
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ message: 'Unauthorized' })
   }
-  
-  // Verify token here - add your authentication logic
-  const token = authHeader.substring(7)
-  // TODO: Verify token validity
-  
+
+  req.fabricSqlAccessToken = authHeader.substring(7)
   next()
 }
 
 // Health check endpoint (no auth required)
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', connected: !!pool, timestamp: new Date().toISOString() })
+  res.json({
+    status: 'OK',
+    connected: true,
+    authMode: 'delegated-user-token',
+    timestamp: new Date().toISOString(),
+  })
 })
 
-// Diagnostic: return column names and a sample row for SPM and MSX account tables (no auth, remove after investigation)
+// Diagnostic: return column names and a sample row for SPM and MSX account tables.
 app.get('/api/diag/schema', async (req, res) => {
+  const authHeader = req.headers.authorization
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ message: 'Bearer token is required for delegated SQL diagnostics.' })
+  }
+
+  const accessToken = authHeader.substring(7)
+  let pool
   try {
+    pool = await createUserScopedPool(accessToken)
     const tables = ['SPM_accounts', 'SPM_accountassignments', 'MSX_accounts']
     const results = {}
     for (const table of tables) {
@@ -116,6 +127,10 @@ app.get('/api/diag/schema', async (req, res) => {
     res.json(results)
   } catch (error) {
     res.status(500).json({ error: error.message })
+  } finally {
+    if (pool) {
+      await pool.close().catch(() => undefined)
+    }
   }
 })
 
@@ -127,17 +142,23 @@ app.use(authenticate)
  * Load only the accounts for the authenticated user (lightweight, called on login)
  */
 app.post('/api/fabric/accounts', async (req, res) => {
+  let pool
   try {
     const { userAlias } = req.body
     console.log('[POST /api/fabric/accounts] Received request with userAlias:', userAlias)
     if (!userAlias) {
       return res.status(400).json({ message: 'userAlias is required' })
     }
-    const accounts = await getAccountsByUser(userAlias)
+    pool = await createUserScopedPool(req.fabricSqlAccessToken)
+    const accounts = await getAccountsByUser(pool, userAlias)
     res.json({ accounts })
   } catch (error) {
     console.error('Error fetching accounts:', error)
     res.status(500).json({ message: 'Failed to fetch accounts', error: error.message })
+  } finally {
+    if (pool) {
+      await pool.close().catch(() => undefined)
+    }
   }
 })
 
@@ -146,6 +167,7 @@ app.post('/api/fabric/accounts', async (req, res) => {
  * Fetch all Fabric data for the authenticated user
  */
 app.post('/api/fabric/data', async (req, res) => {
+  let pool
   try {
     const { userId, userAlias, userName } = req.body
 
@@ -162,12 +184,14 @@ app.post('/api/fabric/data', async (req, res) => {
     }
 
     // Execute all queries in parallel
+    pool = await createUserScopedPool(req.fabricSqlAccessToken)
+
     const [accounts, ownedOpportunities, dealTeamOpportunities, relatedAccountOpportunities, partnerEngagements] = await Promise.all([
-      getAccountsByUser(userAlias),
-      getOwnedOpportunities(userId, userName),
-      getDealTeamOpportunities(userName),
-      getRelatedAccountOpportunities(userAlias),
-      getPartnerEngagements(userId),
+      getAccountsByUser(pool, userAlias),
+      getOwnedOpportunities(pool, userId, userName),
+      getDealTeamOpportunities(pool, userName),
+      getRelatedAccountOpportunities(pool, userAlias),
+      getPartnerEngagements(pool, userId),
     ])
 
     console.log('[POST /api/fabric/data] Query summary: accounts=', accounts.length, 'owned=', ownedOpportunities.length, 'dealTeam=', dealTeamOpportunities.length, 'relatedAccount=', relatedAccountOpportunities.length, 'partnerEngagements=', partnerEngagements.length)
@@ -184,6 +208,10 @@ app.post('/api/fabric/data', async (req, res) => {
   } catch (error) {
     console.error('Error fetching Fabric data:', error)
     res.status(500).json({ message: 'Failed to fetch Fabric data', error: error.message })
+  } finally {
+    if (pool) {
+      await pool.close().catch(() => undefined)
+    }
   }
 })
 
@@ -191,7 +219,7 @@ app.post('/api/fabric/data', async (req, res) => {
  * Query: Get all accounts related to the user alias.
  * Canonical bridge: MSX_accounts.[MSX Account Number] = SPM_accountassignments.[SPM Account Number].
  */
-async function getAccountsByUser(userAlias) {
+async function getAccountsByUser(pool, userAlias) {
   try {
     console.log('[getAccountsByUser] Searching with userAlias:', userAlias)
 
@@ -221,7 +249,7 @@ async function getAccountsByUser(userAlias) {
     return result.recordset
   } catch (error) {
     console.error('Error in getAccountsByUser:', error)
-    return []
+    throw error
   }
 }
 
@@ -229,7 +257,7 @@ async function getAccountsByUser(userAlias) {
  * Query: Get all opportunities owned by the user.
  * Match by Opportunity User Owner using authenticated user name.
  */
-async function getOwnedOpportunities(userId, userName) {
+async function getOwnedOpportunities(pool, userId, userName) {
   try {
     const ownerName = userName.trim().toLowerCase().replace(/\s+/g, ' ')
     const nameParts = ownerName.split(' ').filter(Boolean)
@@ -273,7 +301,6 @@ async function getOwnedOpportunities(userId, userName) {
     `
 
     const request = pool.request()
-    request.input('userId', sql.NVarChar, userId)
     request.input('ownerName', sql.NVarChar, ownerName)
     request.input('reversedOwnerName', sql.NVarChar, reversedName)
     const result = await request.query(query)
@@ -281,7 +308,7 @@ async function getOwnedOpportunities(userId, userName) {
     return result.recordset
   } catch (error) {
     console.error('Error in getOwnedOpportunities:', error)
-    return []
+    throw error
   }
 }
 
@@ -289,7 +316,7 @@ async function getOwnedOpportunities(userId, userName) {
  * Query: Get opportunities where user is part of the deal team.
  * Match by Opportunity Deal Team User using authenticated user name.
  */
-async function getDealTeamOpportunities(userName) {
+async function getDealTeamOpportunities(pool, userName) {
   try {
     const normalizedUserName = userName.trim().toLowerCase().replace(/\s+/g, ' ')
     console.log('[getDealTeamOpportunities] Searching with userName:', normalizedUserName)
@@ -333,7 +360,7 @@ async function getDealTeamOpportunities(userName) {
     return result.recordset
   } catch (error) {
     console.error('Error in getDealTeamOpportunities:', error)
-    return []
+    throw error
   }
 }
 
@@ -341,7 +368,7 @@ async function getDealTeamOpportunities(userName) {
  * Query: Get opportunities related to accounts assigned to the user's alias.
  * Uses SPM Account Number to MSX Account Number correlation.
  */
-async function getRelatedAccountOpportunities(userAlias) {
+async function getRelatedAccountOpportunities(pool, userAlias) {
   try {
     const normalizedAlias = userAlias.trim().toLowerCase()
     console.log('[getRelatedAccountOpportunities] Searching with userAlias:', normalizedAlias)
@@ -389,14 +416,14 @@ async function getRelatedAccountOpportunities(userAlias) {
     return result.recordset
   } catch (error) {
     console.error('Error in getRelatedAccountOpportunities:', error)
-    return []
+    throw error
   }
 }
 
 /**
  * Query: Get partner engagements/referrals related to user, accounts, or opportunities
  */
-async function getPartnerEngagements(userId) {
+async function getPartnerEngagements(pool, userId) {
   try {
     console.log('[getPartnerEngagements] Searching with userId:', userId)
 
@@ -447,7 +474,7 @@ async function getPartnerEngagements(userId) {
     return result.recordset
   } catch (error) {
     console.error('Error in getPartnerEngagements:', error)
-    return []
+    throw error
   }
 }
 
@@ -467,7 +494,6 @@ if (hasBuiltFrontend) {
 // Start server
 async function start() {
   try {
-    await initializePool()
     app.listen(PORT, () => {
       console.log(`Fabric API Server running on http://localhost:${PORT}`)
     })
@@ -482,8 +508,5 @@ start()
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, closing connections...')
-  if (pool) {
-    await pool.close()
-  }
   process.exit(0)
 })
