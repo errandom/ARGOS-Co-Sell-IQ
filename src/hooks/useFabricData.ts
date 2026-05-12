@@ -38,7 +38,17 @@ function useAuthToken() {
     instance
       .acquireTokenSilent({ scopes, account: activeAccount })
       .then((res) => setToken(res.accessToken))
-      .catch((err) => console.warn('Token acquisition failed:', err))
+      .catch((err) => {
+        console.warn('acquireTokenSilent failed, attempting popup:', err)
+        // Fallback to popup if silent acquisition fails (e.g., on page refresh or token expiry)
+        return instance
+          .acquireTokenPopup({ scopes, account: activeAccount })
+          .then((res) => setToken(res.accessToken))
+          .catch((popupErr) => {
+            console.error('Token acquisition failed (silent and popup):', popupErr)
+            setToken(null)
+          })
+      })
   }, [instance, accounts, isAuthenticated])
 
   return token

@@ -79,6 +79,32 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', connected: !!pool, timestamp: new Date().toISOString() })
 })
 
+// Diagnostic: return column names and a sample row for SPM and MSX account tables (no auth, remove after investigation)
+app.get('/api/diag/schema', async (req, res) => {
+  try {
+    const tables = ['SPM_accounts', 'SPM_accountassignments', 'MSX_accounts']
+    const results = {}
+    for (const table of tables) {
+      try {
+        const sample = await pool.request().query(`SELECT TOP 1 * FROM dbo.[${table}]`)
+        results[table] = {
+          columns: sample.recordset.columns
+            ? Object.keys(sample.recordset.columns)
+            : sample.recordset.length > 0
+              ? Object.keys(sample.recordset[0])
+              : [],
+          sampleRow: sample.recordset[0] || null
+        }
+      } catch (tableErr) {
+        results[table] = { error: tableErr.message }
+      }
+    }
+    res.json(results)
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
+})
+
 // All routes below require authentication
 app.use(authenticate)
 
