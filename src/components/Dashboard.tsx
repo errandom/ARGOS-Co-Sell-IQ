@@ -21,6 +21,7 @@ import {
 import { toast } from 'sonner'
 import { generateTopOpportunities } from '@/lib/mockData'
 import { useFabricContext } from '@/lib/FabricContext'
+import { checkApiHealth, getApiBaseUrl } from '@/lib/fabricService'
 import type { Opportunity, PartnerEngagement, User } from '@/types'
 
 interface DashboardProps {
@@ -49,8 +50,13 @@ type DashboardListView =
 export function Dashboard({ user, onNavigate }: DashboardProps) {
   const [isLoading, setIsLoading] = useState(true)
   const [selectedListView, setSelectedListView] = useState<DashboardListView>(null)
+  const [healthStatus, setHealthStatus] = useState<'checking' | 'ok' | 'down'>('checking')
+  const [healthMessage, setHealthMessage] = useState('Checking /api/health...')
+  const [healthTimestamp, setHealthTimestamp] = useState<string | null>(null)
   const [opportunities] = useState(generateTopOpportunities())
   const fabricData = useFabricContext()
+  const apiBaseUrl = getApiBaseUrl()
+  const resolvedApiBaseUrl = apiBaseUrl.startsWith('http') ? apiBaseUrl : `${window.location.origin}${apiBaseUrl}`
 
   const ownedOpportunities = fabricData.opportunities
   const dealTeamOpportunities = fabricData.dealTeamOpportunities
@@ -137,6 +143,43 @@ export function Dashboard({ user, onNavigate }: DashboardProps) {
   useEffect(() => {
     const timer = setTimeout(() => setIsLoading(false), 1000)
     return () => clearTimeout(timer)
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const runHealthCheck = async () => {
+      setHealthStatus('checking')
+      setHealthMessage('Checking /api/health...')
+      try {
+        const result = await checkApiHealth()
+        if (cancelled) return
+        const isHealthy = result.status === 'OK' && result.connected
+        setHealthStatus(isHealthy ? 'ok' : 'down')
+        setHealthMessage(
+          isHealthy
+            ? 'Backend API reachable and database connection is active.'
+            : 'Backend API reachable, but database connection is not active.',
+        )
+        setHealthTimestamp(result.timestamp || new Date().toISOString())
+      } catch (error) {
+        if (cancelled) return
+        const message = error instanceof Error ? error.message : 'Unknown health check error'
+        setHealthStatus('down')
+        setHealthMessage(message)
+        setHealthTimestamp(new Date().toISOString())
+      }
+    }
+
+    void runHealthCheck()
+    const intervalId = window.setInterval(() => {
+      void runHealthCheck()
+    }, 60000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+    }
   }, [])
 
   const metricCards: MetricCard[] = [
@@ -381,6 +424,69 @@ export function Dashboard({ user, onNavigate }: DashboardProps) {
             <p className="text-xs text-muted-foreground">Loading account and opportunity breakdown...</p>
           )}
         </div>
+
+        <Card className="p-4 bg-card border border-border">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <h2 className="text-sm font-semibold text-[oklch(0.33_0.09_252)]">Diagnostics</h2>
+            <button
+              type="button"
+              className="text-xs px-2 py-1 rounded border border-border hover:bg-muted/40"
+              onClick={async () => {
+                setHealthStatus('checking')
+                setHealthMessage('Checking /api/health...')
+                try {
+                  const result = await checkApiHealth()
+                  const isHealthy = result.status === 'OK' && result.connected
+                  setHealthStatus(isHealthy ? 'ok' : 'down')
+                  setHealthMessage(
+                    isHealthy
+                      ? 'Backend API reachable and database connection is active.'
+                      : 'Backend API reachable, but database connection is not active.',
+                  )
+                  setHealthTimestamp(result.timestamp || new Date().toISOString())
+                } catch (error) {
+                  const message = error instanceof Error ? error.message : 'Unknown health check error'
+                  setHealthStatus('down')
+                  setHealthMessage(message)
+                  setHealthTimestamp(new Date().toISOString())
+                }
+              }}
+            >
+              Re-check now
+            </button>
+          </div>
+
+          <div className="mt-3 grid grid-cols-1 lg:grid-cols-3 gap-3 text-xs">
+            <div className="rounded border border-border p-3 bg-muted/10">
+              <div className="text-muted-foreground mb-1">API base URL</div>
+              <div className="text-foreground break-all">{resolvedApiBaseUrl}</div>
+            </div>
+
+            <div className="rounded border border-border p-3 bg-muted/10">
+              <div className="text-muted-foreground mb-1">/api/health status</div>
+              <div
+                className={`font-medium ${
+                  healthStatus === 'ok'
+                    ? 'text-green-600'
+                    : healthStatus === 'checking'
+                      ? 'text-amber-600'
+                      : 'text-red-600'
+                }`}
+              >
+                {healthStatus === 'ok' ? 'Reachable' : healthStatus === 'checking' ? 'Checking...' : 'Unavailable'}
+              </div>
+              <div className="text-muted-foreground mt-1">{healthMessage}</div>
+              {healthTimestamp && <div className="text-muted-foreground mt-1">Last check: {healthTimestamp}</div>}
+            </div>
+
+            <div className="rounded border border-border p-3 bg-muted/10">
+              <div className="text-muted-foreground mb-1">Last Fabric API error</div>
+              <div className={fabricData.error ? 'text-red-600' : 'text-green-600'}>
+                {fabricData.error || 'None'}
+              </div>
+            </div>
+          </div>
+        </Card>
 
         <TooltipProvider>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">

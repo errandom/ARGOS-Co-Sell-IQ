@@ -1,6 +1,26 @@
 import type { Account, FabricData } from '@/types'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api'
+const configuredApiUrl = (import.meta.env.VITE_API_URL || '').trim()
+const API_URL = configuredApiUrl || (import.meta.env.DEV ? 'http://localhost:3001/api' : '/api')
+
+export function getApiBaseUrl() {
+  return API_URL
+}
+
+export async function checkApiHealth(): Promise<{ status: string; connected: boolean; timestamp?: string }> {
+  const res = await fetch(`${API_URL}/health`, {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+    },
+  })
+
+  if (!res.ok) {
+    throw new Error(`Health endpoint returned ${res.status}`)
+  }
+
+  return res.json() as Promise<{ status: string; connected: boolean; timestamp?: string }>
+}
 
 async function fabricFetch<T>(path: string, token: string, body: Record<string, unknown>): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {

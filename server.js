@@ -19,8 +19,17 @@ import express from 'express'
 import sql from 'mssql'
 import cors from 'cors'
 import dotenv from 'dotenv'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 dotenv.config()
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+const distDir = path.join(__dirname, 'dist')
+const indexHtmlPath = path.join(distDir, 'index.html')
+const hasBuiltFrontend = fs.existsSync(indexHtmlPath)
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -28,6 +37,11 @@ const PORT = process.env.PORT || 3001
 // Middleware
 app.use(cors())
 app.use(express.json())
+
+// Serve built frontend assets when available (web app deployment mode)
+if (hasBuiltFrontend) {
+  app.use(express.static(distDir))
+}
 
 // Database configuration
 const dbConfig = {
@@ -412,6 +426,13 @@ app.use((err, req, res, next) => {
   console.error('Unhandled error:', err)
   res.status(500).json({ message: 'Internal server error', error: err.message })
 })
+
+// SPA fallback for non-API routes in deployed web app mode.
+if (hasBuiltFrontend) {
+  app.get(/^\/(?!api).*/, (req, res) => {
+    res.sendFile(indexHtmlPath)
+  })
+}
 
 // Start server
 async function start() {
