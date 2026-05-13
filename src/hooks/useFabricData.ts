@@ -27,10 +27,12 @@ function useAuthToken() {
   const { instance, accounts, inProgress } = useMsal()
   const isAuthenticated = useIsAuthenticated()
   const [token, setToken] = useState<string | null>(null)
+  const [tokenError, setTokenError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!isAuthenticated) {
       setToken(null)
+      setTokenError(null)
       sessionStorage.removeItem(FABRIC_INTERACTIVE_ATTEMPT_KEY)
       return
     }
@@ -51,6 +53,7 @@ function useAuthToken() {
       .then((res) => {
         if (cancelled) return
         setToken(res.accessToken)
+        setTokenError(null)
         sessionStorage.removeItem(FABRIC_INTERACTIVE_ATTEMPT_KEY)
       })
       .catch((err) => {
@@ -61,6 +64,7 @@ function useAuthToken() {
           if (alreadyAttempted) {
             console.error('Interactive token request already attempted. Waiting for user to complete consent/sign-in.')
             setToken(null)
+            setTokenError('consent_required')
             return
           }
 
@@ -83,6 +87,7 @@ function useAuthToken() {
 
         console.error('Token acquisition failed:', err)
         setToken(null)
+        setTokenError('unknown')
       })
 
     return () => {
@@ -90,7 +95,7 @@ function useAuthToken() {
     }
   }, [instance, accounts, isAuthenticated, inProgress])
 
-  return token
+  return { token, tokenError }
 }
 
 /** Derive the userId from the MSAL account (Azure AD object ID) */
@@ -126,8 +131,13 @@ function useUserDisplayName(): string | null {
  * Load user accounts immediately after authentication.
  * Returns accounts and loading/error state.
  */
+export function useAuthTokenError(): string | null {
+  const { tokenError } = useAuthToken()
+  return tokenError
+}
+
 export function useFabricAccounts() {
-  const token = useAuthToken()
+  const { token } = useAuthToken()
   const userId = useUserId()
   const userAlias = useUserAlias()
 
@@ -145,7 +155,7 @@ export function useFabricAccounts() {
  * Only runs when explicitly enabled (e.g. after accounts are loaded).
  */
 export function useFabricFullData(enabled = true) {
-  const token = useAuthToken()
+  const { token } = useAuthToken()
   const userId = useUserId()
   const userAlias = useUserAlias()
   const userName = useUserDisplayName()
