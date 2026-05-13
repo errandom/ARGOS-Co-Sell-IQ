@@ -3,14 +3,17 @@
  *
  * SETUP INSTRUCTIONS:
  * 1. Install dependencies: npm install express mssql cors dotenv
- * 2. Create .env file with Fabric SQL location:
+ * 2. Create .env file with Fabric SQL location and workspace identity credentials:
  *    FABRIC_DB_SERVER=x6eps4xrq2xudenlfv6naeo3i4-ywxvf76w3u4e5gpdqvtoz57rsa.msit-database.fabric.microsoft.com
  *    FABRIC_DB_PORT=1433
  *    FABRIC_DB_NAME=ARGOS SQL-87da6cf7-5c29-48f5-9b97-b2a3245da352
- * 3. Run the server: node src/server.js
+ *    FABRIC_TENANT_ID=72f988bf-86f1-41af-91ab-2d7cd011db47
+ *    FABRIC_CLIENT_ID=df5a4087-2452-4508-9089-c7a0afaa0f5f
+ *    FABRIC_CLIENT_SECRET=<workspace-identity-secret-from-entra>
+ * 3. Run the server: node server.js
  *
- * This service uses the signed-in user's delegated Microsoft Entra token
- * to access Fabric SQL for prototype use cases.
+ * This service uses a Fabric workspace identity (service principal) for all
+ * Fabric SQL queries. No user tokens are required on the frontend.
  */
 
 import express from 'express'
@@ -41,7 +44,63 @@ if (hasBuiltFrontend) {
   app.use(express.static(distDir))
 }
 
-// Database configuration shared across all user-scoped connections.
+// Workspace identity (service principal) configuration
+const workspaceIdentityConfig = {
+  tenantId: process.env.FABRIC_TENANT_ID || '72f988bf-86f1-41af-91ab-2d7cd011db47',
+  clientId: process.env.FABRIC_CLIENT_ID || 'df5a4087-2452-4508-9089-c7a0afaa0f5f',
+  clientSecret: process.env.FABRIC_CLIENT_SECRET,
+}
+
+// Token cache for workspace identity (avoid repeated auth calls)
+let cachedWorkspaceToken = null
+let tokenExpiryTime = null
+
+/**
+ * Get a fresh access token for the workspace identity using client credentials flow.
+ * Tokens are cached to avoid repeated Entra calls.
+ */
+async function getWorkspaceIdentityToken() {
+  // Return cached token if still valid (with 60-second buffer)
+  if (cachedWorkspaceToken && tokenExpiryTime && Date.now() < tokenExpiryTime - 60000) {
+    console.log('[getWorkspaceIdentityToken] Using cached token')
+    return cachedWorkspaceToken
+  }
+
+  if (!workspaceIdentityConfig.clientSecret) {
+    throw new Error('FABRIC_CLIENT_SECRET is not configured. Cannot authenticate as workspace identity.')
+  }
+
+  console.log('[getWorkspaceIdentityToken] Acquiring new token from Entra...')
+
+  const tokenUrl = `https://login.microsoftonline.com/${workspaceIdentityConfig.tenantId}/oauth2/v2.0/token`
+
+  const body = new URLSearchParams({
+    grant_type: 'client_credentials',
+    client_id: workspaceIdentityConfig.clientId,
+    client_secret: workspaceIdentityConfig.clientSecret,
+    scope: 'https://database.windows.net/.default',
+  })
+
+  const response = await fetch(tokenUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+  })
+
+  if (!response.ok) {
+    const errorText = await response.text()
+    throw new Error(`Failed to acquire workspace identity token: ${response.status} ${errorText}`)
+  }
+
+  const tokenData = await response.json()
+  cachedWorkspaceToken = tokenData.access_token
+  tokenExpiryTime = Date.now() + tokenData.expires_in * 1000
+
+  console.log('[getWorkspaceIdentityToken] Token acquired successfully')
+  return cachedWorkspaceToken
+}
+
+// Database configuration shared across all connections.
 const baseDbConfig = {
   server: process.env.FABRIC_DB_SERVER || 'x6eps4xrq2xudenlfv6naeo3i4-ywxvf76w3u4e5gpdqvtoz57rsa.msit-database.fabric.microsoft.com',
   port: parseInt(process.env.FABRIC_DB_PORT || '1433'),
@@ -58,7 +117,7 @@ const baseDbConfig = {
   },
 }
 
-function buildUserScopedDbConfig(accessToken) {
+function buildAccessTokenDbConfig(accessToken) {
   return {
     ...baseDbConfig,
     authentication: {
@@ -70,8 +129,19 @@ function buildUserScopedDbConfig(accessToken) {
   }
 }
 
+/**
+ * Create a Fabric SQL pool using the workspace identity token.
+ */
+async function createWorkspaceIdentityPool() {
+  const token = await getWorkspaceIdentityToken()
+  const pool = new sql.ConnectionPool(buildAccessTokenDbConfig(token))
+  await pool.connect()
+  return pool
+}
+
+// Deprecated: User-scoped pool (kept for reference, no longer used)
 async function createUserScopedPool(accessToken) {
-  const pool = new sql.ConnectionPool(buildUserScopedDbConfig(accessToken))
+  const pool = new sql.ConnectionPool(buildAccessTokenDbConfig(accessToken))
   await pool.connect()
   return pool
 }
@@ -93,37 +163,21 @@ function getNameVariants(userName) {
   return Array.from(new Set([normalized, firstLast, reversedFull, reversedFirstLast].filter(Boolean)))
 }
 
-function authenticate(req, res, next) {
-  const authHeader = req.headers.authorization
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ message: 'Unauthorized' })
-  }
-
-  req.fabricSqlAccessToken = authHeader.substring(7)
-  next()
-}
-
 // Health check endpoint (no auth required)
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'OK',
     connected: true,
-    authMode: 'delegated-user-token',
+    authMode: 'workspace-identity',
     timestamp: new Date().toISOString(),
   })
 })
 
 // Diagnostic: return column names and a sample row for SPM and MSX account tables.
 app.get('/api/diag/schema', async (req, res) => {
-  const authHeader = req.headers.authorization
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ message: 'Bearer token is required for delegated SQL diagnostics.' })
-  }
-
-  const accessToken = authHeader.substring(7)
   let pool
   try {
-    pool = await createUserScopedPool(accessToken)
+    pool = await createWorkspaceIdentityPool()
     const tables = ['SPM_accounts', 'SPM_accountassignments', 'MSX_accounts']
     const results = {}
     for (const table of tables) {
@@ -152,7 +206,7 @@ app.get('/api/diag/schema', async (req, res) => {
 })
 
 // Diagnostic: inspect MSX opportunities owner values and current matching behavior.
-app.post('/api/diag/opportunities', authenticate, async (req, res) => {
+app.post('/api/diag/opportunities', async (req, res) => {
   let pool
   try {
     const { userId, userAlias, userName } = req.body
@@ -172,7 +226,7 @@ app.post('/api/diag/opportunities', authenticate, async (req, res) => {
     const lastName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : ''
     const lastNamePattern = lastName ? `%${lastName}%` : null
 
-    pool = await createUserScopedPool(req.fabricSqlAccessToken)
+    pool = await createWorkspaceIdentityPool()
 
     const request = pool.request()
     request.input('ownerName', sql.NVarChar, normalizedUserName)
@@ -263,12 +317,10 @@ app.post('/api/diag/opportunities', authenticate, async (req, res) => {
   }
 })
 
-// All routes below require authentication
-app.use(authenticate)
-
 /**
  * POST /api/fabric/accounts
  * Load only the accounts for the authenticated user (lightweight, called on login)
+ * Uses workspace identity for Fabric SQL access (no user token required).
  */
 app.post('/api/fabric/accounts', async (req, res) => {
   let pool
@@ -278,7 +330,7 @@ app.post('/api/fabric/accounts', async (req, res) => {
     if (!userAlias) {
       return res.status(400).json({ message: 'userAlias is required' })
     }
-    pool = await createUserScopedPool(req.fabricSqlAccessToken)
+    pool = await createWorkspaceIdentityPool()
     const accounts = await getAccountsByUser(pool, userAlias)
     res.json({ accounts })
   } catch (error) {
@@ -294,6 +346,7 @@ app.post('/api/fabric/accounts', async (req, res) => {
 /**
  * POST /api/fabric/data
  * Fetch all Fabric data for the authenticated user
+ * Uses workspace identity for Fabric SQL access (no user token required).
  */
 app.post('/api/fabric/data', async (req, res) => {
   let pool
@@ -312,8 +365,8 @@ app.post('/api/fabric/data', async (req, res) => {
       return res.status(400).json({ message: 'userName is required' })
     }
 
-    // Execute all queries in parallel
-    pool = await createUserScopedPool(req.fabricSqlAccessToken)
+    // Execute all queries in parallel using workspace identity
+    pool = await createWorkspaceIdentityPool()
 
     const [accounts, ownedOpportunities, dealTeamOpportunities, relatedAccountOpportunities, partnerEngagements] = await Promise.all([
       getAccountsByUser(pool, userAlias),

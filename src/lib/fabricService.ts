@@ -34,12 +34,11 @@ export async function checkApiHealth(): Promise<{ status: string; connected: boo
   }
 }
 
-async function fabricFetch<T>(path: string, token: string, body: Record<string, unknown>): Promise<T> {
+async function fabricFetch<T>(path: string, body: Record<string, unknown>): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify(body),
   })
@@ -53,8 +52,8 @@ async function fabricFetch<T>(path: string, token: string, body: Record<string, 
 }
 
 /** Load only the user's accounts (lightweight, called immediately after auth) */
-export async function fetchAccounts(token: string, userId: string, userAlias: string): Promise<Account[]> {
-  const data = await fabricFetch<{ accounts: Account[] }>('/fabric/accounts', token, {
+export async function fetchAccounts(userId: string, userAlias: string): Promise<Account[]> {
+  const data = await fabricFetch<{ accounts: Account[] }>('/fabric/accounts', {
     userId,
     userAlias,
   })
@@ -63,10 +62,9 @@ export async function fetchAccounts(token: string, userId: string, userAlias: st
 
 /** Load the full Fabric dataset for the user */
 export async function fetchFabricData(
-  token: string,
   userId: string,
   userAlias: string,
   userName: string,
 ): Promise<Omit<FabricData, 'isLoading' | 'error'>> {
-  return fabricFetch('/fabric/data', token, { userId, userAlias, userName })
+  return fabricFetch('/fabric/data', { userId, userAlias, userName })
 }
