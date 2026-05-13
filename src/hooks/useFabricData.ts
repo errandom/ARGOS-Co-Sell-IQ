@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useMsal, useIsAuthenticated } from '@azure/msal-react'
+import { InteractionRequiredAuthError } from '@azure/msal-browser'
 import { useState, useEffect } from 'react'
 import { fetchAccounts, fetchFabricData } from '@/lib/fabricService'
 import { fabricSqlScope } from '@/lib/authConfig'
@@ -39,15 +40,24 @@ function useAuthToken() {
       .acquireTokenSilent({ scopes, account: activeAccount })
       .then((res) => setToken(res.accessToken))
       .catch((err) => {
-        console.warn('acquireTokenSilent failed, attempting popup:', err)
-        // Fallback to popup if silent acquisition fails (e.g., on page refresh or token expiry)
-        return instance
-          .acquireTokenPopup({ scopes, account: activeAccount })
-          .then((res) => setToken(res.accessToken))
-          .catch((popupErr) => {
-            console.error('Token acquisition failed (silent and popup):', popupErr)
+        if (err instanceof InteractionRequiredAuthError) {
+          // Redirect flow is more reliable than popup in enterprise/browser-restricted environments.
+          console.warn('acquireTokenSilent requires user consent/interaction. Redirecting for consent:', err)
+          instance.acquireTokenRedirect({ scopes, account: activeAccount }).catch((redirectErr) => {
+            console.error('Token acquisition redirect failed:', redirectErr)
             setToken(null)
           })
+          return
+        }
+
+        const errorCode = err instanceof Error ? err.name : 'unknown_error'
+        if (errorCode === 'BrowserAuthError' || String(err).includes('interaction_in_progress')) {
+          console.warn('Token acquisition already in progress. Waiting for existing interaction to complete.')
+          return
+        }
+
+        console.error('Token acquisition failed:', err)
+        setToken(null)
       })
   }, [instance, accounts, isAuthenticated])
 

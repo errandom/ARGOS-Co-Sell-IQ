@@ -62,6 +62,11 @@ export function Dashboard({ user, onNavigate }: DashboardProps) {
   const dealTeamOpportunities = fabricData.dealTeamOpportunities
   const accountAssociatedOpportunities = fabricData.relatedAccountOpportunities
   const associatedAccounts = fabricData.accounts
+  const associatedAccountIds = new Set(
+    associatedAccounts
+      .map((account) => String(account.ID_account || '').trim())
+      .filter(Boolean),
+  )
 
   const totalOpportunityCount =
     ownedOpportunities.length +
@@ -112,6 +117,33 @@ export function Dashboard({ user, onNavigate }: DashboardProps) {
   const inboundPartnerReferrals = partnerEngagements.filter(
     (engagement) => isInboundReferral(engagement) && !hasOpportunityId(engagement),
   )
+
+  const getReferralAcceptanceState = (engagement: PartnerEngagement): 'accepted' | 'declined' | 'other' => {
+    const acceptance = String(engagement['Referral Acceptance'] || '').toLowerCase()
+    const rejection = String(engagement['Referral Rejection'] || '').toLowerCase()
+    const outcome = String(engagement['Referral Outcome'] || '').toLowerCase()
+    const status = String(engagement['Partner Engagement Status'] || '').toLowerCase()
+    const substatus = String(engagement['Partner Engagement Substatus'] || '').toLowerCase()
+
+    const combined = [acceptance, rejection, outcome, status, substatus].join(' ')
+
+    if (combined.includes('accept')) return 'accepted'
+    if (combined.includes('declin') || combined.includes('reject')) return 'declined'
+    return 'other'
+  }
+
+  const inboundAcceptedCount = inboundPartnerReferrals.filter(
+    (engagement) => getReferralAcceptanceState(engagement) === 'accepted',
+  ).length
+
+  const inboundDeclinedCount = inboundPartnerReferrals.filter(
+    (engagement) => getReferralAcceptanceState(engagement) === 'declined',
+  ).length
+
+  const inboundRelatedToMyAccountsCount = inboundPartnerReferrals.filter((engagement) => {
+    const accountId = String(engagement.ID_account || '').trim()
+    return accountId.length > 0 && associatedAccountIds.has(accountId)
+  }).length
 
   // Outbound includes all outbound referrals, regardless of opportunity linkage.
   const outboundPartnerReferrals = partnerEngagements.filter((engagement) =>
@@ -214,7 +246,12 @@ export function Dashboard({ user, onNavigate }: DashboardProps) {
       icon: <ArrowDownToLine className="w-5 h-5" />,
       color: 'text-green-500',
       clickable: false,
-      tooltip: 'Inbound referrals not yet associated to an opportunity ID (to avoid double counting).',
+      tooltip: 'Inbound referrals not yet associated to an opportunity ID, with acceptance and account-scope breakdown.',
+      breakdown: [
+        { label: 'Accepted', count: inboundAcceptedCount },
+        { label: 'Declined', count: inboundDeclinedCount },
+        { label: 'Related to My Accounts', count: inboundRelatedToMyAccountsCount },
+      ],
     },
     {
       id: 'referrals-outbound',
