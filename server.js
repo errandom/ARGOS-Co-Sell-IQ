@@ -49,6 +49,8 @@ const workspaceIdentityConfig = {
   tenantId: process.env.FABRIC_TENANT_ID || '72f988bf-86f1-41af-91ab-2d7cd011db47',
   clientId: process.env.FABRIC_CLIENT_ID || 'df5a4087-2452-4508-9089-c7a0afaa0f5f',
   clientSecret: process.env.FABRIC_CLIENT_SECRET,
+  oidcToken: process.env.OIDC_TOKEN,
+  federatedTokenFile: process.env.AZURE_FEDERATED_TOKEN_FILE,
   useManagedIdentity: process.env.USE_MANAGED_IDENTITY === 'true',
 }
 
@@ -60,11 +62,17 @@ let tokenExpiryTime = null
 // Federated credential (OIDC) support for GitHub Actions and other OIDC providers
 //
 async function getTokenViaClientAssertion() {
-  // Try both common env vars for OIDC tokens
-  const oidcToken = process.env.OIDC_TOKEN || process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN
-  if (!oidcToken) {
-    throw new Error('OIDC_TOKEN or ACTIONS_ID_TOKEN_REQUEST_TOKEN environment variable not set for federated credential flow.')
+  let oidcToken = workspaceIdentityConfig.oidcToken
+
+  // Azure workload identity providers can expose the assertion as a file path.
+  if (!oidcToken && workspaceIdentityConfig.federatedTokenFile) {
+    oidcToken = fs.readFileSync(workspaceIdentityConfig.federatedTokenFile, 'utf8').trim()
   }
+
+  if (!oidcToken) {
+    throw new Error('Federated assertion not found. Set OIDC_TOKEN or AZURE_FEDERATED_TOKEN_FILE for client assertion flow.')
+  }
+
   const tokenUrl = `https://login.microsoftonline.com/${workspaceIdentityConfig.tenantId}/oauth2/v2.0/token`
   const body = new URLSearchParams({
     grant_type: 'client_credentials',
@@ -103,7 +111,7 @@ async function getWorkspaceIdentityToken() {
   }
   console.log('[getWorkspaceIdentityToken] Acquiring new token...')
   let accessToken
-  if (process.env.OIDC_TOKEN || process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) {
+  if (workspaceIdentityConfig.oidcToken || workspaceIdentityConfig.federatedTokenFile) {
     console.log('[getWorkspaceIdentityToken] Using federated credential (OIDC)')
     accessToken = await getTokenViaClientAssertion()
   } else if (workspaceIdentityConfig.useManagedIdentity) {
@@ -115,7 +123,7 @@ async function getWorkspaceIdentityToken() {
   } else {
     throw new Error(
       'No authentication method configured. Set either:\n' +
-      '  - OIDC_TOKEN or ACTIONS_ID_TOKEN_REQUEST_TOKEN (for federated credentials)\n' +
+      '  - OIDC_TOKEN or AZURE_FEDERATED_TOKEN_FILE (for federated credentials)\n' +
       '  - USE_MANAGED_IDENTITY=true (for Azure App Service)\n' +
       '  - FABRIC_CLIENT_SECRET in .env (for client credentials flow)'
     )
@@ -130,21 +138,41 @@ async function getWorkspaceIdentityToken() {
  * Get token via Azure Managed Identity (for Azure App Service, ACI, etc.)
  */
 async function getTokenViaManagedIdentity() {
-  // Azure provides the token via the IMDS endpoint on App Service
-  const msiEndpoint = process.env.MSI_ENDPOINT || 'http://169.254.169.254/metadata/identity/oauth2/token'
-  const msiSecret = process.env.MSI_SECRET
+  // App Service managed identity endpoint (preferred on Azure Web Apps)
+  if (process.env.IDENTITY_ENDPOINT && process.env.IDENTITY_HEADER) {
+    const params = new URLSearchParams({
+      'api-version': '2019-08-01',
+      resource: 'https://database.windows.net/',
+    })
 
-  const params = new URLSearchParams({
-    api_version: '2017-09-01',
-    resource: 'https://database.windows.net',
-  })
+    const response = await fetch(`${process.env.IDENTITY_ENDPOINT}?${params.toString()}`, {
+      headers: {
+        'X-IDENTITY-HEADER': process.env.IDENTITY_HEADER,
+      },
+    })
 
-  const headers = { Metadata: 'true' }
-  if (msiSecret) {
-    headers['X-IDENTITY-HEADER'] = msiSecret
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error(`Failed to acquire App Service managed identity token: ${response.status} ${errorText}`)
+    }
+
+    const tokenData = await response.json()
+    return {
+      token: tokenData.access_token,
+      expiresIn: tokenData.expires_in,
+    }
   }
 
-  const response = await fetch(`${msiEndpoint}?${params}`, { headers })
+  // IMDS endpoint fallback
+  const imdsEndpoint = 'http://169.254.169.254/metadata/identity/oauth2/token'
+  const params = new URLSearchParams({
+    'api-version': '2018-02-01',
+    resource: 'https://database.windows.net/',
+  })
+
+  const response = await fetch(`${imdsEndpoint}?${params.toString()}`, {
+    headers: { Metadata: 'true' },
+  })
 
   if (!response.ok) {
     const errorText = await response.text()
