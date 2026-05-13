@@ -58,6 +58,36 @@ const workspaceIdentityConfig = {
 let cachedWorkspaceToken = null
 let tokenExpiryTime = null
 
+function getConfiguredAuthMode() {
+  if (workspaceIdentityConfig.oidcToken || workspaceIdentityConfig.federatedTokenFile) {
+    return 'federated-credential'
+  }
+  if (workspaceIdentityConfig.useManagedIdentity) {
+    return 'managed-identity'
+  }
+  if (workspaceIdentityConfig.clientSecret) {
+    return 'client-secret'
+  }
+  return 'unconfigured'
+}
+
+function toErrorResponse(error, fallbackCode = 'UNEXPECTED_ERROR') {
+  const message = error instanceof Error ? error.message : String(error)
+  let code = fallbackCode
+
+  if (message.includes('No authentication method configured')) {
+    code = 'AUTH_NOT_CONFIGURED'
+  } else if (message.includes('Failed to acquire token')) {
+    code = 'TOKEN_ACQUISITION_FAILED'
+  } else if (message.includes('Login failed for user')) {
+    code = 'SQL_LOGIN_FAILED'
+  } else if (message.includes('permission') || message.includes('principal')) {
+    code = 'SQL_PERMISSION_DENIED'
+  }
+
+  return { code, message }
+}
+
 //
 // Federated credential (OIDC) support for GitHub Actions and other OIDC providers
 //
@@ -285,9 +315,54 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'OK',
     connected: true,
-    authMode: 'workspace-identity',
+    authMode: getConfiguredAuthMode(),
     timestamp: new Date().toISOString(),
   })
+})
+
+// Diagnostic: validate runtime auth mode, token acquisition, and SQL connectivity.
+app.get('/api/diag/auth', async (req, res) => {
+  const result = {
+    authMode: getConfiguredAuthMode(),
+    checks: {
+      tokenAcquisition: { ok: false, detail: null },
+      sqlConnection: { ok: false, detail: null },
+      sqlQuery: { ok: false, detail: null },
+    },
+    env: {
+      useManagedIdentity: workspaceIdentityConfig.useManagedIdentity,
+      hasClientSecret: Boolean(workspaceIdentityConfig.clientSecret),
+      hasOidcToken: Boolean(workspaceIdentityConfig.oidcToken),
+      hasFederatedTokenFile: Boolean(workspaceIdentityConfig.federatedTokenFile),
+      hasIdentityEndpoint: Boolean(process.env.IDENTITY_ENDPOINT),
+      hasIdentityHeader: Boolean(process.env.IDENTITY_HEADER),
+    },
+  }
+
+  let pool
+  try {
+    const token = await getWorkspaceIdentityToken()
+    result.checks.tokenAcquisition = { ok: true, detail: `token_length=${token.length}` }
+
+    pool = new sql.ConnectionPool(buildAccessTokenDbConfig(token))
+    await pool.connect()
+    result.checks.sqlConnection = { ok: true, detail: 'connection_open' }
+
+    const ping = await pool.request().query('SELECT 1 AS ok')
+    result.checks.sqlQuery = {
+      ok: true,
+      detail: `row_ok=${ping.recordset?.[0]?.ok === 1}`,
+    }
+
+    res.json({ status: 'OK', ...result })
+  } catch (error) {
+    const parsed = toErrorResponse(error, 'AUTH_DIAGNOSTIC_FAILED')
+    res.status(500).json({ status: 'ERROR', ...result, error: parsed })
+  } finally {
+    if (pool) {
+      await pool.close().catch(() => undefined)
+    }
+  }
 })
 
 // Diagnostic: return column names and a sample row for SPM and MSX account tables.
@@ -452,7 +527,13 @@ app.post('/api/fabric/accounts', async (req, res) => {
     res.json({ accounts })
   } catch (error) {
     console.error('Error fetching accounts:', error)
-    res.status(500).json({ message: 'Failed to fetch accounts', error: error.message })
+    const parsed = toErrorResponse(error, 'ACCOUNTS_QUERY_FAILED')
+    res.status(500).json({
+      message: 'Failed to fetch accounts',
+      error: parsed.message,
+      code: parsed.code,
+      authMode: getConfiguredAuthMode(),
+    })
   } finally {
     if (pool) {
       await pool.close().catch(() => undefined)
