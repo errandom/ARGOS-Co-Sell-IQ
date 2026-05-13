@@ -1,10 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
 import { useMsal, useIsAuthenticated } from '@azure/msal-react'
-import { InteractionRequiredAuthError } from '@azure/msal-browser'
+import { InteractionRequiredAuthError, InteractionStatus } from '@azure/msal-browser'
 import { useState, useEffect } from 'react'
 import { fetchAccounts, fetchFabricData } from '@/lib/fabricService'
 import { fabricSqlScope } from '@/lib/authConfig'
 import type { Account, FabricData } from '@/types'
+
+const FABRIC_INTERACTIVE_ATTEMPT_KEY = 'argos.fabric.interactive.attempted'
 
 function deriveUserAlias(username?: string | null): string | null {
   if (!username) return null
@@ -22,25 +24,48 @@ function deriveDisplayName(name?: string | null): string | null {
 
 /** Acquire a delegated Fabric SQL access token for the signed-in user. */
 function useAuthToken() {
-  const { instance, accounts } = useMsal()
+  const { instance, accounts, inProgress } = useMsal()
   const isAuthenticated = useIsAuthenticated()
   const [token, setToken] = useState<string | null>(null)
 
   useEffect(() => {
     if (!isAuthenticated) {
       setToken(null)
+      sessionStorage.removeItem(FABRIC_INTERACTIVE_ATTEMPT_KEY)
       return
     }
+
+    // Never trigger token acquisition while MSAL is already handling an auth interaction.
+    if (inProgress !== InteractionStatus.None) {
+      return
+    }
+
     const activeAccount = instance.getActiveAccount() || accounts[0]
     if (!activeAccount) return
 
     const scopes = [fabricSqlScope]
+    let cancelled = false
 
     instance
       .acquireTokenSilent({ scopes, account: activeAccount })
-      .then((res) => setToken(res.accessToken))
+      .then((res) => {
+        if (cancelled) return
+        setToken(res.accessToken)
+        sessionStorage.removeItem(FABRIC_INTERACTIVE_ATTEMPT_KEY)
+      })
       .catch((err) => {
+        if (cancelled) return
+
         if (err instanceof InteractionRequiredAuthError) {
+          const alreadyAttempted = sessionStorage.getItem(FABRIC_INTERACTIVE_ATTEMPT_KEY) === '1'
+          if (alreadyAttempted) {
+            console.error('Interactive token request already attempted. Waiting for user to complete consent/sign-in.')
+            setToken(null)
+            return
+          }
+
+          sessionStorage.setItem(FABRIC_INTERACTIVE_ATTEMPT_KEY, '1')
+
           // Redirect flow is more reliable than popup in enterprise/browser-restricted environments.
           console.warn('acquireTokenSilent requires user consent/interaction. Redirecting for consent:', err)
           instance.acquireTokenRedirect({ scopes, account: activeAccount }).catch((redirectErr) => {
@@ -59,7 +84,11 @@ function useAuthToken() {
         console.error('Token acquisition failed:', err)
         setToken(null)
       })
-  }, [instance, accounts, isAuthenticated])
+
+    return () => {
+      cancelled = true
+    }
+  }, [instance, accounts, isAuthenticated, inProgress])
 
   return token
 }
