@@ -76,6 +76,23 @@ async function createUserScopedPool(accessToken) {
   return pool
 }
 
+function normalizeName(value) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+function getNameVariants(userName) {
+  const normalized = normalizeName(userName)
+  const parts = normalized.split(' ').filter(Boolean)
+  const firstName = parts[0] || ''
+  const lastName = parts.length > 1 ? parts[parts.length - 1] : ''
+  const firstLast = firstName && lastName ? `${firstName} ${lastName}` : normalized
+  const reversedFull = parts.length > 1 ? `${parts.slice(1).join(' ')}, ${firstName}` : normalized
+  const reversedFirstLast = firstName && lastName ? `${lastName}, ${firstName}` : normalized
+
+  // Keep only non-empty unique values to avoid duplicate SQL comparisons.
+  return Array.from(new Set([normalized, firstLast, reversedFull, reversedFirstLast].filter(Boolean)))
+}
+
 function authenticate(req, res, next) {
   const authHeader = req.headers.authorization
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -127,6 +144,118 @@ app.get('/api/diag/schema', async (req, res) => {
     res.json(results)
   } catch (error) {
     res.status(500).json({ error: error.message })
+  } finally {
+    if (pool) {
+      await pool.close().catch(() => undefined)
+    }
+  }
+})
+
+// Diagnostic: inspect MSX opportunities owner values and current matching behavior.
+app.post('/api/diag/opportunities', authenticate, async (req, res) => {
+  let pool
+  try {
+    const { userId, userAlias, userName } = req.body
+
+    if (!userName) {
+      return res.status(400).json({ message: 'userName is required' })
+    }
+
+    const normalizedUserName = userName.trim().toLowerCase().replace(/\s+/g, ' ')
+    const nameParts = normalizedUserName.split(' ').filter(Boolean)
+    const firstName = nameParts[0] || ''
+    const remainingNames = nameParts.slice(1).join(' ')
+    const reversedUserName = remainingNames && firstName
+      ? `${remainingNames}, ${firstName}`
+      : normalizedUserName
+    const firstNamePattern = firstName ? `%${firstName}%` : null
+    const lastName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : ''
+    const lastNamePattern = lastName ? `%${lastName}%` : null
+
+    pool = await createUserScopedPool(req.fabricSqlAccessToken)
+
+    const request = pool.request()
+    request.input('ownerName', sql.NVarChar, normalizedUserName)
+    request.input('reversedOwnerName', sql.NVarChar, reversedUserName)
+    request.input('firstNamePattern', sql.NVarChar, firstNamePattern)
+    request.input('lastNamePattern', sql.NVarChar, lastNamePattern)
+
+    const [summaryResult, ownerSamplesResult, matchedOwnersResult, opportunitySamplesResult] = await Promise.all([
+      request.query(`
+        SELECT
+          COUNT(*) AS totalOpportunityCount,
+          SUM(CASE WHEN o.[Opportunity User Owner] IS NULL OR LTRIM(RTRIM(o.[Opportunity User Owner])) = '' THEN 1 ELSE 0 END) AS nullOrBlankOwnerCount,
+          SUM(CASE WHEN LOWER(LTRIM(RTRIM(o.[Opportunity User Owner]))) = @ownerName THEN 1 ELSE 0 END) AS exactNameMatchCount,
+          SUM(CASE WHEN LOWER(LTRIM(RTRIM(o.[Opportunity User Owner]))) = @reversedOwnerName THEN 1 ELSE 0 END) AS reversedNameMatchCount,
+          SUM(CASE WHEN @firstNamePattern IS NOT NULL AND LOWER(o.[Opportunity User Owner]) LIKE @firstNamePattern THEN 1 ELSE 0 END) AS firstNameLikeCount,
+          SUM(CASE WHEN @lastNamePattern IS NOT NULL AND LOWER(o.[Opportunity User Owner]) LIKE @lastNamePattern THEN 1 ELSE 0 END) AS lastNameLikeCount,
+          SUM(CASE WHEN o.[ID_owner] = @ownerName THEN 1 ELSE 0 END) AS ownerIdEqualsUserNameCount
+        FROM dbo.MSX_opportunities o
+      `),
+      request.query(`
+        SELECT TOP 20
+          LOWER(LTRIM(RTRIM(o.[Opportunity User Owner]))) AS normalizedOwner,
+          COUNT(*) AS opportunityCount
+        FROM dbo.MSX_opportunities o
+        WHERE o.[Opportunity User Owner] IS NOT NULL
+          AND LTRIM(RTRIM(o.[Opportunity User Owner])) <> ''
+        GROUP BY LOWER(LTRIM(RTRIM(o.[Opportunity User Owner])))
+        ORDER BY opportunityCount DESC, normalizedOwner ASC
+      `),
+      request.query(`
+        SELECT TOP 20
+          LOWER(LTRIM(RTRIM(o.[Opportunity User Owner]))) AS normalizedOwner,
+          COUNT(*) AS opportunityCount
+        FROM dbo.MSX_opportunities o
+        WHERE o.[Opportunity User Owner] IS NOT NULL
+          AND LTRIM(RTRIM(o.[Opportunity User Owner])) <> ''
+          AND (
+            LOWER(LTRIM(RTRIM(o.[Opportunity User Owner]))) = @ownerName
+            OR LOWER(LTRIM(RTRIM(o.[Opportunity User Owner]))) = @reversedOwnerName
+            OR (@firstNamePattern IS NOT NULL AND LOWER(o.[Opportunity User Owner]) LIKE @firstNamePattern)
+            OR (@lastNamePattern IS NOT NULL AND LOWER(o.[Opportunity User Owner]) LIKE @lastNamePattern)
+          )
+        GROUP BY LOWER(LTRIM(RTRIM(o.[Opportunity User Owner])))
+        ORDER BY opportunityCount DESC, normalizedOwner ASC
+      `),
+      request.query(`
+        SELECT TOP 10
+          o.[ID_opportunity],
+          o.[ID_owner],
+          o.[Opportunity User Owner],
+          o.[Opportunity Number],
+          o.[Opportunity Title],
+          o.[Opportunity Account],
+          o.[Opportunity Est. Close Date],
+          o.[Opportunity Date/Time Last Modified]
+        FROM dbo.MSX_opportunities o
+        WHERE
+          LOWER(LTRIM(RTRIM(o.[Opportunity User Owner]))) = @ownerName
+          OR LOWER(LTRIM(RTRIM(o.[Opportunity User Owner]))) = @reversedOwnerName
+          OR (@firstNamePattern IS NOT NULL AND LOWER(o.[Opportunity User Owner]) LIKE @firstNamePattern)
+          OR (@lastNamePattern IS NOT NULL AND LOWER(o.[Opportunity User Owner]) LIKE @lastNamePattern)
+        ORDER BY o.[Opportunity Date/Time Last Modified] DESC
+      `),
+    ])
+
+    res.json({
+      inputs: {
+        userId: userId || null,
+        userAlias: userAlias || null,
+        userName,
+        normalizedUserName,
+        reversedUserName,
+        firstName,
+        lastName,
+      },
+      summary: summaryResult.recordset[0] || null,
+      topOwners: ownerSamplesResult.recordset,
+      matchedOwners: matchedOwnersResult.recordset,
+      matchedOpportunitySamples: opportunitySamplesResult.recordset,
+    })
+  } catch (error) {
+    console.error('Error in /api/diag/opportunities:', error)
+    res.status(500).json({ message: 'Failed to fetch opportunities diagnostics', error: error.message })
   } finally {
     if (pool) {
       await pool.close().catch(() => undefined)
@@ -259,15 +388,10 @@ async function getAccountsByUser(pool, userAlias) {
  */
 async function getOwnedOpportunities(pool, userId, userName) {
   try {
-    const ownerName = userName.trim().toLowerCase().replace(/\s+/g, ' ')
-    const nameParts = ownerName.split(' ').filter(Boolean)
-    const firstName = nameParts[0] || ''
-    const remainingNames = nameParts.slice(1).join(' ')
-    const reversedName = remainingNames && firstName
-      ? `${remainingNames}, ${firstName}`
-      : ownerName
+    const nameVariants = getNameVariants(userName)
+    const [ownerName = null, ownerName2 = null, ownerName3 = null, ownerName4 = null] = nameVariants
 
-    console.log('[getOwnedOpportunities] Searching with userId:', userId, 'ownerName:', ownerName, 'reversedName:', reversedName)
+    console.log('[getOwnedOpportunities] Searching with userId:', userId, 'ownerNames:', nameVariants)
 
     const query = `
       SELECT 
@@ -296,13 +420,17 @@ async function getOwnedOpportunities(pool, userId, userName) {
       FROM dbo.MSX_opportunities o
       WHERE
         LOWER(LTRIM(RTRIM(o.[Opportunity User Owner]))) = @ownerName
-        OR LOWER(LTRIM(RTRIM(o.[Opportunity User Owner]))) = @reversedOwnerName
+        OR (@ownerName2 IS NOT NULL AND LOWER(LTRIM(RTRIM(o.[Opportunity User Owner]))) = @ownerName2)
+        OR (@ownerName3 IS NOT NULL AND LOWER(LTRIM(RTRIM(o.[Opportunity User Owner]))) = @ownerName3)
+        OR (@ownerName4 IS NOT NULL AND LOWER(LTRIM(RTRIM(o.[Opportunity User Owner]))) = @ownerName4)
       ORDER BY o.[Opportunity Est. Close Date] ASC
     `
 
     const request = pool.request()
     request.input('ownerName', sql.NVarChar, ownerName)
-    request.input('reversedOwnerName', sql.NVarChar, reversedName)
+    request.input('ownerName2', sql.NVarChar, ownerName2)
+    request.input('ownerName3', sql.NVarChar, ownerName3)
+    request.input('ownerName4', sql.NVarChar, ownerName4)
     const result = await request.query(query)
     console.log('[getOwnedOpportunities] Found', result.recordset.length, 'opportunities')
     return result.recordset
@@ -318,8 +446,9 @@ async function getOwnedOpportunities(pool, userId, userName) {
  */
 async function getDealTeamOpportunities(pool, userName) {
   try {
-    const normalizedUserName = userName.trim().toLowerCase().replace(/\s+/g, ' ')
-    console.log('[getDealTeamOpportunities] Searching with userName:', normalizedUserName)
+    const nameVariants = getNameVariants(userName)
+    const [userName1 = null, userName2 = null, userName3 = null, userName4 = null] = nameVariants
+    console.log('[getDealTeamOpportunities] Searching with userNames:', nameVariants)
 
     const query = `
       SELECT DISTINCT
@@ -348,13 +477,21 @@ async function getDealTeamOpportunities(pool, userName) {
         dt.[Opportunity Deal Team User]
       FROM dbo.MSX_opportunities o
       INNER JOIN dbo.MSX_opportunitydealteam dt ON o.[ID_opportunity] = dt.[ID_opportunity]
-      WHERE LOWER(LTRIM(RTRIM(dt.[Opportunity Deal Team User]))) = @userName
-        AND LOWER(LTRIM(RTRIM(o.[Opportunity User Owner]))) <> @userName
+      WHERE (
+          LOWER(LTRIM(RTRIM(dt.[Opportunity Deal Team User]))) = @userName1
+          OR (@userName2 IS NOT NULL AND LOWER(LTRIM(RTRIM(dt.[Opportunity Deal Team User]))) = @userName2)
+          OR (@userName3 IS NOT NULL AND LOWER(LTRIM(RTRIM(dt.[Opportunity Deal Team User]))) = @userName3)
+          OR (@userName4 IS NOT NULL AND LOWER(LTRIM(RTRIM(dt.[Opportunity Deal Team User]))) = @userName4)
+        )
+        AND LOWER(LTRIM(RTRIM(o.[Opportunity User Owner]))) <> @userName1
       ORDER BY o.[Opportunity Est. Close Date] ASC
     `
 
     const request = pool.request()
-    request.input('userName', sql.NVarChar, normalizedUserName)
+    request.input('userName1', sql.NVarChar, userName1)
+    request.input('userName2', sql.NVarChar, userName2)
+    request.input('userName3', sql.NVarChar, userName3)
+    request.input('userName4', sql.NVarChar, userName4)
     const result = await request.query(query)
     console.log('[getDealTeamOpportunities] Found', result.recordset.length, 'opportunities')
     return result.recordset
