@@ -49,29 +49,119 @@ const workspaceIdentityConfig = {
   tenantId: process.env.FABRIC_TENANT_ID || '72f988bf-86f1-41af-91ab-2d7cd011db47',
   clientId: process.env.FABRIC_CLIENT_ID || 'df5a4087-2452-4508-9089-c7a0afaa0f5f',
   clientSecret: process.env.FABRIC_CLIENT_SECRET,
+  useManagedIdentity: process.env.USE_MANAGED_IDENTITY === 'true',
 }
 
 // Token cache for workspace identity (avoid repeated auth calls)
 let cachedWorkspaceToken = null
 let tokenExpiryTime = null
 
+//
+// Federated credential (OIDC) support for GitHub Actions and other OIDC providers
+//
+async function getTokenViaClientAssertion() {
+  // Try both common env vars for OIDC tokens
+  const oidcToken = process.env.OIDC_TOKEN || process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN
+  if (!oidcToken) {
+    throw new Error('OIDC_TOKEN or ACTIONS_ID_TOKEN_REQUEST_TOKEN environment variable not set for federated credential flow.')
+  }
+  const tokenUrl = `https://login.microsoftonline.com/${workspaceIdentityConfig.tenantId}/oauth2/v2.0/token`
+  const body = new URLSearchParams({
+    grant_type: 'client_credentials',
+    client_id: workspaceIdentityConfig.clientId,
+    scope: 'https://database.windows.net/.default',
+    client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+    client_assertion: oidcToken,
+  })
+  const response = await fetch(tokenUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+  })
+  if (!response.ok) {
+    const errorText = await response.text()
+    throw new Error(`Failed to acquire token via client assertion (OIDC): ${response.status} ${errorText}`)
+  }
+  const tokenData = await response.json()
+  return {
+    token: tokenData.access_token,
+    expiresIn: tokenData.expires_in,
+  }
+}
+
 /**
- * Get a fresh access token for the workspace identity using client credentials flow.
- * Tokens are cached to avoid repeated Entra calls.
+ * Get a fresh access token for the workspace identity.
+ * Supports three authentication methods:
+ * 1. Azure Managed Identity (recommended for Azure App Service) - set USE_MANAGED_IDENTITY=true
+ * 2. Client Secret (set FABRIC_CLIENT_SECRET in .env)
+ * 3. Can be extended to support federated credentials / client assertion
  */
 async function getWorkspaceIdentityToken() {
-  // Return cached token if still valid (with 60-second buffer)
   if (cachedWorkspaceToken && tokenExpiryTime && Date.now() < tokenExpiryTime - 60000) {
     console.log('[getWorkspaceIdentityToken] Using cached token')
     return cachedWorkspaceToken
   }
+  console.log('[getWorkspaceIdentityToken] Acquiring new token...')
+  let accessToken
+  if (process.env.OIDC_TOKEN || process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) {
+    console.log('[getWorkspaceIdentityToken] Using federated credential (OIDC)')
+    accessToken = await getTokenViaClientAssertion()
+  } else if (workspaceIdentityConfig.useManagedIdentity) {
+    console.log('[getWorkspaceIdentityToken] Using Azure Managed Identity')
+    accessToken = await getTokenViaManagedIdentity()
+  } else if (workspaceIdentityConfig.clientSecret) {
+    console.log('[getWorkspaceIdentityToken] Using client credentials (secret)')
+    accessToken = await getTokenViaClientSecret()
+  } else {
+    throw new Error(
+      'No authentication method configured. Set either:\n' +
+      '  - OIDC_TOKEN or ACTIONS_ID_TOKEN_REQUEST_TOKEN (for federated credentials)\n' +
+      '  - USE_MANAGED_IDENTITY=true (for Azure App Service)\n' +
+      '  - FABRIC_CLIENT_SECRET in .env (for client credentials flow)'
+    )
+  }
+  cachedWorkspaceToken = accessToken.token
+  tokenExpiryTime = Date.now() + (accessToken.expiresIn * 1000)
+  console.log('[getWorkspaceIdentityToken] Token acquired successfully')
+  return cachedWorkspaceToken
+}
 
-  if (!workspaceIdentityConfig.clientSecret) {
-    throw new Error('FABRIC_CLIENT_SECRET is not configured. Cannot authenticate as workspace identity.')
+/**
+ * Get token via Azure Managed Identity (for Azure App Service, ACI, etc.)
+ */
+async function getTokenViaManagedIdentity() {
+  // Azure provides the token via the IMDS endpoint on App Service
+  const msiEndpoint = process.env.MSI_ENDPOINT || 'http://169.254.169.254/metadata/identity/oauth2/token'
+  const msiSecret = process.env.MSI_SECRET
+
+  const params = new URLSearchParams({
+    api_version: '2017-09-01',
+    resource: 'https://database.windows.net',
+  })
+
+  const headers = { Metadata: 'true' }
+  if (msiSecret) {
+    headers['X-IDENTITY-HEADER'] = msiSecret
   }
 
-  console.log('[getWorkspaceIdentityToken] Acquiring new token from Entra...')
+  const response = await fetch(`${msiEndpoint}?${params}`, { headers })
 
+  if (!response.ok) {
+    const errorText = await response.text()
+    throw new Error(`Failed to acquire Managed Identity token: ${response.status} ${errorText}`)
+  }
+
+  const tokenData = await response.json()
+  return {
+    token: tokenData.access_token,
+    expiresIn: tokenData.expires_in,
+  }
+}
+
+/**
+ * Get token via client credentials flow (requires FABRIC_CLIENT_SECRET)
+ */
+async function getTokenViaClientSecret() {
   const tokenUrl = `https://login.microsoftonline.com/${workspaceIdentityConfig.tenantId}/oauth2/v2.0/token`
 
   const body = new URLSearchParams({
@@ -89,15 +179,14 @@ async function getWorkspaceIdentityToken() {
 
   if (!response.ok) {
     const errorText = await response.text()
-    throw new Error(`Failed to acquire workspace identity token: ${response.status} ${errorText}`)
+    throw new Error(`Failed to acquire token via client credentials: ${response.status} ${errorText}`)
   }
 
   const tokenData = await response.json()
-  cachedWorkspaceToken = tokenData.access_token
-  tokenExpiryTime = Date.now() + tokenData.expires_in * 1000
-
-  console.log('[getWorkspaceIdentityToken] Token acquired successfully')
-  return cachedWorkspaceToken
+  return {
+    token: tokenData.access_token,
+    expiresIn: tokenData.expires_in,
+  }
 }
 
 // Database configuration shared across all connections.
