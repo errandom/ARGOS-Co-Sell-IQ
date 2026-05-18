@@ -34,12 +34,21 @@ export async function checkApiHealth(): Promise<{ status: string; connected: boo
   }
 }
 
-async function fabricFetch<T>(path: string, body: Record<string, unknown>): Promise<T> {
+async function fabricFetch<T>(
+  path: string,
+  body: Record<string, unknown>,
+  accessToken?: string | null,
+): Promise<T> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  }
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`
+  }
+
   const res = await fetch(`${API_URL}${path}`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: JSON.stringify(body),
   })
 
@@ -52,11 +61,15 @@ async function fabricFetch<T>(path: string, body: Record<string, unknown>): Prom
 }
 
 /** Load only the user's accounts (lightweight, called immediately after auth) */
-export async function fetchAccounts(userId: string, userAlias: string): Promise<Account[]> {
+export async function fetchAccounts(
+  userId: string,
+  userAlias: string,
+  accessToken?: string | null,
+): Promise<Account[]> {
   const data = await fabricFetch<{ accounts: Account[] }>('/fabric/accounts', {
     userId,
     userAlias,
-  })
+  }, accessToken)
   return data.accounts
 }
 
@@ -65,6 +78,7 @@ export async function fetchFabricData(
   userId: string,
   userAlias: string,
   userName: string,
+  accessToken?: string | null,
 ): Promise<Omit<FabricData, 'isLoading' | 'error'>> {
-  return fabricFetch('/fabric/data', { userId, userAlias, userName })
+  return fabricFetch('/fabric/data', { userId, userAlias, userName }, accessToken)
 }
