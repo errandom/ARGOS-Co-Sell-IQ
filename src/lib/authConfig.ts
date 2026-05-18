@@ -30,8 +30,12 @@ export const msalConfig: Configuration = {
 }
 
 export const apiScope = import.meta.env.VITE_AAD_API_SCOPE || ''
-export const fabricSqlScope =
-  (import.meta.env.VITE_FABRIC_SQL_SCOPE || 'https://database.windows.net/.default').trim()
+const configuredFabricSqlScope = (import.meta.env.VITE_FABRIC_SQL_SCOPE || '').trim()
+
+// Delegated interactive auth must use user_impersonation (not .default).
+export const fabricSqlScope = configuredFabricSqlScope
+  ? configuredFabricSqlScope.replace('/.default', '/user_impersonation')
+  : 'https://database.windows.net/user_impersonation'
 
 // Default scopes include Graph permissions required for the communication scan.
 // Override by setting VITE_AAD_SCOPES as a comma-separated list in your .env.
