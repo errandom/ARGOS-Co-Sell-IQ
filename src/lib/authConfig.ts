@@ -29,6 +29,10 @@ export const msalConfig: Configuration = {
   },
 }
 
+export const apiScope = import.meta.env.VITE_AAD_API_SCOPE || ''
+export const fabricSqlScope =
+  (import.meta.env.VITE_FABRIC_SQL_SCOPE || 'https://database.windows.net/.default').trim()
+
 // Default scopes include Graph permissions required for the communication scan.
 // Override by setting VITE_AAD_SCOPES as a comma-separated list in your .env.
 const defaultScopes = [
@@ -39,6 +43,7 @@ const defaultScopes = [
   'Mail.Read',
   'Chat.Read',
   'Calendars.Read',
+  fabricSqlScope,
 ].join(',')
 
 const configuredScopes = (import.meta.env.VITE_AAD_SCOPES || defaultScopes)
@@ -49,7 +54,3 @@ const configuredScopes = (import.meta.env.VITE_AAD_SCOPES || defaultScopes)
 export const loginRequest: RedirectRequest = {
   scopes: configuredScopes,
 }
-
-export const apiScope = import.meta.env.VITE_AAD_API_SCOPE || ''
-export const fabricSqlScope =
-  (import.meta.env.VITE_FABRIC_SQL_SCOPE || 'https://database.windows.net/.default').trim()
