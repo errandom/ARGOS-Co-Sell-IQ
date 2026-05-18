@@ -277,18 +277,15 @@ function buildAccessTokenDbConfig(accessToken) {
 }
 
 /**
- * Create a Fabric SQL pool using the workspace identity token.
+ * Create a Fabric SQL pool using a provided access token (delegated user or workspace identity).
+ * If no token is provided, falls back to workspace identity.
  */
-async function createWorkspaceIdentityPool() {
-  const token = await getWorkspaceIdentityToken()
+async function createSqlPoolWithToken(accessToken) {
+  let token = accessToken
+  if (!token) {
+    token = await getWorkspaceIdentityToken()
+  }
   const pool = new sql.ConnectionPool(buildAccessTokenDbConfig(token))
-  await pool.connect()
-  return pool
-}
-
-// Deprecated: User-scoped pool (kept for reference, no longer used)
-async function createUserScopedPool(accessToken) {
-  const pool = new sql.ConnectionPool(buildAccessTokenDbConfig(accessToken))
   await pool.connect()
   return pool
 }
@@ -522,7 +519,13 @@ app.post('/api/fabric/accounts', async (req, res) => {
     if (!userAlias) {
       return res.status(400).json({ message: 'userAlias is required' })
     }
-    pool = await createWorkspaceIdentityPool()
+    // Get bearer token from Authorization header if present
+    let userToken = null
+    const authHeader = req.headers['authorization'] || req.headers['Authorization']
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      userToken = authHeader.substring('Bearer '.length)
+    }
+    pool = await createSqlPoolWithToken(userToken)
     const accounts = await getAccountsByUser(pool, userAlias)
     res.json({ accounts })
   } catch (error) {
@@ -563,8 +566,13 @@ app.post('/api/fabric/data', async (req, res) => {
       return res.status(400).json({ message: 'userName is required' })
     }
 
-    // Execute all queries in parallel using workspace identity
-    pool = await createWorkspaceIdentityPool()
+    // Get bearer token from Authorization header if present
+    let userToken = null
+    const authHeader = req.headers['authorization'] || req.headers['Authorization']
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      userToken = authHeader.substring('Bearer '.length)
+    }
+    pool = await createSqlPoolWithToken(userToken)
 
     const [accounts, ownedOpportunities, dealTeamOpportunities, relatedAccountOpportunities, partnerEngagements] = await Promise.all([
       getAccountsByUser(pool, userAlias),
