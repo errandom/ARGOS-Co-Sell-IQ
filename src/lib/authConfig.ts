@@ -31,6 +31,8 @@ export const msalConfig: Configuration = {
 
 export const apiScope = import.meta.env.VITE_AAD_API_SCOPE || ''
 const configuredFabricSqlScope = (import.meta.env.VITE_FABRIC_SQL_SCOPE || '').trim()
+const includeFabricSqlScopeInLogin =
+  (import.meta.env.VITE_INCLUDE_FABRIC_SQL_SCOPE_IN_LOGIN || '').trim().toLowerCase() === 'true'
 
 // Delegated interactive auth must use user_impersonation (not .default).
 export const fabricSqlScope = configuredFabricSqlScope
@@ -47,7 +49,6 @@ const defaultScopes = [
   'Mail.Read',
   'Chat.Read',
   'Calendars.Read',
-  fabricSqlScope,
 ].join(',')
 
 const configuredScopes = (import.meta.env.VITE_AAD_SCOPES || defaultScopes)
@@ -56,5 +57,11 @@ const configuredScopes = (import.meta.env.VITE_AAD_SCOPES || defaultScopes)
   .filter(Boolean)
 
 export const loginRequest: RedirectRequest = {
-  scopes: configuredScopes,
+  scopes: includeFabricSqlScopeInLogin
+    ? Array.from(new Set([...configuredScopes, fabricSqlScope]))
+    : configuredScopes,
+}
+
+export const fabricSqlTokenRequest: RedirectRequest = {
+  scopes: [fabricSqlScope],
 }

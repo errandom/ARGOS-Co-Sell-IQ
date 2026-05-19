@@ -9,11 +9,13 @@
  *    FABRIC_DB_NAME=ARGOS SQL-87da6cf7-5c29-48f5-9b97-b2a3245da352
  *    FABRIC_TENANT_ID=72f988bf-86f1-41af-91ab-2d7cd011db47
  *    FABRIC_CLIENT_ID=df5a4087-2452-4508-9089-c7a0afaa0f5f
- *    FABRIC_CLIENT_SECRET=<workspace-identity-secret-from-entra>
+ *    FABRIC_AUTH_MODE=delegated
+ *    FABRIC_DELEGATED_TOKEN_AUDIENCE=https://database.windows.net
  * 3. Run the server: node server.js
  *
- * This service uses a Fabric workspace identity (service principal) for all
- * Fabric SQL queries. No user tokens are required on the frontend.
+ * Auth modes:
+ * - delegated: requires user Bearer token (validated via Entra JWKS)
+ * - hybrid/default: supports workspace identity fallback modes
  */
 
 import express from 'express'
@@ -23,6 +25,7 @@ import dotenv from 'dotenv'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createRemoteJWKSet, jwtVerify } from 'jose'
 
 dotenv.config()
 
@@ -34,6 +37,14 @@ const hasBuiltFrontend = fs.existsSync(indexHtmlPath)
 
 const app = express()
 const PORT = process.env.PORT || 3001
+const fabricAuthMode = (process.env.FABRIC_AUTH_MODE || 'hybrid').trim().toLowerCase()
+const fabricTenantId = process.env.FABRIC_TENANT_ID || '72f988bf-86f1-41af-91ab-2d7cd011db47'
+const delegatedTokenAudience = process.env.FABRIC_DELEGATED_TOKEN_AUDIENCE || 'https://database.windows.net'
+const delegatedTokenIssuer = `https://login.microsoftonline.com/${fabricTenantId}/v2.0`
+const delegatedClientId = process.env.FABRIC_CLIENT_ID || 'df5a4087-2452-4508-9089-c7a0afaa0f5f'
+const delegatedTokenJwks = createRemoteJWKSet(
+  new URL(`https://login.microsoftonline.com/${fabricTenantId}/discovery/v2.0/keys`)
+)
 
 // Middleware
 app.use(cors())
@@ -46,7 +57,7 @@ if (hasBuiltFrontend) {
 
 // Workspace identity (service principal) configuration
 const workspaceIdentityConfig = {
-  tenantId: process.env.FABRIC_TENANT_ID || '72f988bf-86f1-41af-91ab-2d7cd011db47',
+  tenantId: fabricTenantId,
   clientId: process.env.FABRIC_CLIENT_ID || 'df5a4087-2452-4508-9089-c7a0afaa0f5f',
   clientSecret: process.env.FABRIC_CLIENT_SECRET,
   oidcToken: process.env.OIDC_TOKEN,
@@ -59,6 +70,9 @@ let cachedWorkspaceToken = null
 let tokenExpiryTime = null
 
 function getConfiguredAuthMode() {
+  if (fabricAuthMode === 'delegated') {
+    return 'delegated-user-token'
+  }
   if (workspaceIdentityConfig.oidcToken || workspaceIdentityConfig.federatedTokenFile) {
     return 'federated-credential'
   }
@@ -77,6 +91,10 @@ function toErrorResponse(error, fallbackCode = 'UNEXPECTED_ERROR') {
 
   if (message.includes('No authentication method configured')) {
     code = 'AUTH_NOT_CONFIGURED'
+  } else if (message.includes('Delegated user token is required')) {
+    code = 'USER_TOKEN_REQUIRED'
+  } else if (message.includes('Invalid or expired delegated user token')) {
+    code = 'INVALID_USER_TOKEN'
   } else if (message.includes('Failed to acquire token')) {
     code = 'TOKEN_ACQUISITION_FAILED'
   } else if (message.includes('Login failed for user')) {
@@ -86,6 +104,60 @@ function toErrorResponse(error, fallbackCode = 'UNEXPECTED_ERROR') {
   }
 
   return { code, message }
+}
+
+function extractBearerToken(req) {
+  const authHeader = req.headers['authorization'] || req.headers['Authorization']
+  if (typeof authHeader !== 'string' || !authHeader.startsWith('Bearer ')) {
+    return null
+  }
+  return authHeader.substring('Bearer '.length).trim()
+}
+
+async function verifyDelegatedUserToken(token) {
+  const verified = await jwtVerify(token, delegatedTokenJwks, {
+    issuer: delegatedTokenIssuer,
+    audience: delegatedTokenAudience,
+    clockTolerance: 30,
+  })
+
+  const authorizedParty = verified.payload.azp || verified.payload.appid
+  if (delegatedClientId && authorizedParty && authorizedParty !== delegatedClientId) {
+    throw new Error('Invalid or expired delegated user token: token client does not match configured app registration.')
+  }
+
+  return verified.payload
+}
+
+async function requireDelegatedUserToken(req, res, next) {
+  if (fabricAuthMode !== 'delegated') {
+    return next()
+  }
+
+  try {
+    const token = extractBearerToken(req)
+    if (!token) {
+      return res.status(401).json({
+        message: 'Delegated user token is required',
+        code: 'USER_TOKEN_REQUIRED',
+      })
+    }
+
+    const claims = await verifyDelegatedUserToken(token)
+    req.userToken = token
+    req.userClaims = claims
+    return next()
+  } catch (error) {
+    const parsed = toErrorResponse(
+      new Error(`Invalid or expired delegated user token: ${error instanceof Error ? error.message : String(error)}`),
+      'INVALID_USER_TOKEN'
+    )
+    return res.status(401).json({
+      message: 'Delegated token validation failed',
+      error: parsed.message,
+      code: parsed.code,
+    })
+  }
 }
 
 //
@@ -282,12 +354,19 @@ function buildAccessTokenDbConfig(accessToken) {
  */
 async function createSqlPoolWithToken(accessToken) {
   let token = accessToken
+  if (!token && fabricAuthMode === 'delegated') {
+    throw new Error('Delegated user token is required. Sign in interactively and include Authorization: Bearer <fabric-sql-token>.')
+  }
   if (!token) {
     token = await getWorkspaceIdentityToken()
   }
   const pool = new sql.ConnectionPool(buildAccessTokenDbConfig(token))
   await pool.connect()
   return pool
+}
+
+async function createWorkspaceIdentityPool() {
+  return createSqlPoolWithToken(null)
 }
 
 function normalizeName(value) {
@@ -316,6 +395,9 @@ app.get('/api/health', (req, res) => {
     timestamp: new Date().toISOString(),
   })
 })
+
+// Require delegated tokens on Fabric data routes when delegated mode is enabled.
+app.use('/api/fabric', requireDelegatedUserToken)
 
 // Diagnostic: validate runtime auth mode, token acquisition, and SQL connectivity.
 app.get('/api/diag/auth', async (req, res) => {
@@ -519,12 +601,7 @@ app.post('/api/fabric/accounts', async (req, res) => {
     if (!userAlias) {
       return res.status(400).json({ message: 'userAlias is required' })
     }
-    // Get bearer token from Authorization header if present
-    let userToken = null
-    const authHeader = req.headers['authorization'] || req.headers['Authorization']
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      userToken = authHeader.substring('Bearer '.length)
-    }
+    const userToken = req.userToken || extractBearerToken(req)
     pool = await createSqlPoolWithToken(userToken)
     const accounts = await getAccountsByUser(pool, userAlias)
     res.json({ accounts })
@@ -566,12 +643,7 @@ app.post('/api/fabric/data', async (req, res) => {
       return res.status(400).json({ message: 'userName is required' })
     }
 
-    // Get bearer token from Authorization header if present
-    let userToken = null
-    const authHeader = req.headers['authorization'] || req.headers['Authorization']
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      userToken = authHeader.substring('Bearer '.length)
-    }
+    const userToken = req.userToken || extractBearerToken(req)
     pool = await createSqlPoolWithToken(userToken)
 
     const [accounts, ownedOpportunities, dealTeamOpportunities, relatedAccountOpportunities, partnerEngagements] = await Promise.all([

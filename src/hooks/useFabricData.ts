@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useMsal, useIsAuthenticated } from '@azure/msal-react'
 import { InteractionRequiredAuthError } from '@azure/msal-browser'
 import { fetchAccounts, fetchFabricData } from '@/lib/fabricService'
-import { fabricSqlScope } from '@/lib/authConfig'
+import { fabricSqlTokenRequest } from '@/lib/authConfig'
 import type { Account, FabricData } from '@/types'
 
 function deriveUserAlias(username?: string | null): string | null {
@@ -57,7 +57,7 @@ async function getFabricSqlAccessToken(
   try {
     const tokenResult = await instance.acquireTokenSilent({
       account,
-      scopes: [fabricSqlScope],
+      ...fabricSqlTokenRequest,
     })
     return tokenResult.accessToken || null
   } catch (error) {
@@ -65,7 +65,7 @@ async function getFabricSqlAccessToken(
       try {
         const tokenResult = await instance.acquireTokenPopup({
           account,
-          scopes: [fabricSqlScope],
+          ...fabricSqlTokenRequest,
         })
         return tokenResult.accessToken || null
       } catch (popupError) {

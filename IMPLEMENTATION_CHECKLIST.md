@@ -29,6 +29,6 @@ This checklist is aligned with the current implementation and schema.
 - [ ] Confirm app registration redirect URI is correct
 - [ ] Confirm backend `.env` connectivity values are valid
 - [ ] Confirm data returns for a real signed-in user context
-- [ ] Implement full JWT validation in backend before production
+- [x] Implement full JWT validation in backend before production
 
 For full setup, use `FABRIC_SETUP.md`.
