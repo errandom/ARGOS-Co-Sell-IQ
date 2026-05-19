@@ -33,11 +33,15 @@ export const apiScope = import.meta.env.VITE_AAD_API_SCOPE || ''
 const configuredFabricSqlScope = (import.meta.env.VITE_FABRIC_SQL_SCOPE || '').trim()
 const includeFabricSqlScopeInLogin =
   (import.meta.env.VITE_INCLUDE_FABRIC_SQL_SCOPE_IN_LOGIN || '').trim().toLowerCase() === 'true'
+const enableFabricSqlDelegatedToken =
+  (import.meta.env.VITE_ENABLE_FABRIC_SQL_DELEGATED_TOKEN || 'true').trim().toLowerCase() !== 'false'
 
 // Delegated interactive auth must use user_impersonation (not .default).
 export const fabricSqlScope = configuredFabricSqlScope
   ? configuredFabricSqlScope.replace('/.default', '/user_impersonation')
-  : 'https://database.windows.net/user_impersonation'
+  : enableFabricSqlDelegatedToken
+    ? 'https://database.windows.net/user_impersonation'
+    : ''
 
 // Default scopes include Graph permissions required for the communication scan.
 // Override by setting VITE_AAD_SCOPES as a comma-separated list in your .env.
@@ -63,5 +67,5 @@ export const loginRequest: RedirectRequest = {
 }
 
 export const fabricSqlTokenRequest: RedirectRequest = {
-  scopes: [fabricSqlScope],
+  scopes: fabricSqlScope ? [fabricSqlScope] : [],
 }

@@ -53,6 +53,9 @@ async function getFabricSqlAccessToken(
   account: ReturnType<typeof useMsal>['accounts'][number] | undefined,
 ): Promise<string | null> {
   if (!account) return null
+  if (!fabricSqlTokenRequest.scopes || fabricSqlTokenRequest.scopes.length === 0) {
+    return null
+  }
 
   try {
     const tokenResult = await instance.acquireTokenSilent({
