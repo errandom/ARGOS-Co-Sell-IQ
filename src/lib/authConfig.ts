@@ -25,14 +25,18 @@ export const msalConfig: Configuration = {
   },
   cache: {
     cacheLocation: 'localStorage',
-    storeAuthStateInCookie: false,
   },
 }
 
 export const apiScope = import.meta.env.VITE_AAD_API_SCOPE || ''
 const configuredFabricSqlScope = (import.meta.env.VITE_FABRIC_SQL_SCOPE || '').trim()
 const includeFabricSqlScopeInLogin =
-  (import.meta.env.VITE_INCLUDE_FABRIC_SQL_SCOPE_IN_LOGIN || '').trim().toLowerCase() === 'true'
+  (() => {
+    const configuredValue = (import.meta.env.VITE_INCLUDE_FABRIC_SQL_SCOPE_IN_LOGIN || '').trim().toLowerCase()
+    if (configuredValue === 'true') return true
+    if (configuredValue === 'false') return false
+    return true
+  })()
 const enableFabricSqlDelegatedToken =
   (import.meta.env.VITE_ENABLE_FABRIC_SQL_DELEGATED_TOKEN || 'true').trim().toLowerCase() !== 'false'
 
