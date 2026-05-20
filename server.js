@@ -46,6 +46,19 @@ const delegatedTokenJwks = createRemoteJWKSet(
   new URL(`https://login.microsoftonline.com/${fabricTenantId}/discovery/v2.0/keys`)
 )
 
+function normalizeClientSecret(value) {
+  const normalized = String(value || '').trim()
+  if (!normalized) return null
+
+  // Guard against common sample/placeholder values in local .env files.
+  const lower = normalized.toLowerCase()
+  if (lower.includes('replace_with') || lower.includes('your_secret') || lower.includes('leave_blank')) {
+    return null
+  }
+
+  return normalized
+}
+
 // Middleware
 app.use(cors())
 app.use(express.json())
@@ -59,7 +72,7 @@ if (hasBuiltFrontend) {
 const workspaceIdentityConfig = {
   tenantId: fabricTenantId,
   clientId: process.env.FABRIC_CLIENT_ID || 'df5a4087-2452-4508-9089-c7a0afaa0f5f',
-  clientSecret: process.env.FABRIC_CLIENT_SECRET,
+  clientSecret: normalizeClientSecret(process.env.FABRIC_CLIENT_SECRET),
   oidcToken: process.env.OIDC_TOKEN,
   federatedTokenFile: process.env.AZURE_FEDERATED_TOKEN_FILE,
   useManagedIdentity: process.env.USE_MANAGED_IDENTITY === 'true',
