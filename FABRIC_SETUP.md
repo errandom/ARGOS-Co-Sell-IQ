@@ -186,6 +186,12 @@ Login fails immediately:
 - Confirm SPA redirect URI matches exactly
 - Confirm app registration supports intended account type
 
+"Need admin approval" during initial sign-in:
+- Keep `VITE_AAD_SCOPES` minimal for first login (`openid,profile,offline_access,User.Read`).
+- Set `VITE_INCLUDE_FABRIC_SQL_SCOPE_IN_LOGIN=false` so SQL delegated scope is not requested on first redirect.
+- Request `https://database.windows.net/user_impersonation` only when Fabric data is loaded.
+- If the prompt persists with minimal scopes, check Enterprise App user assignment and tenant user-consent policy for this app registration.
+
 Token acquisition warning:
 - If VITE_AAD_API_SCOPE is empty, app falls back to User.Read
 - Add custom API scope once backend app registration exposes it

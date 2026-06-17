@@ -35,7 +35,8 @@ const includeFabricSqlScopeInLogin =
     const configuredValue = (import.meta.env.VITE_INCLUDE_FABRIC_SQL_SCOPE_IN_LOGIN || '').trim().toLowerCase()
     if (configuredValue === 'true') return true
     if (configuredValue === 'false') return false
-    return true
+    // Keep first sign-in lightweight; request Fabric SQL scope only when needed.
+    return false
   })()
 const enableFabricSqlDelegatedToken =
   (import.meta.env.VITE_ENABLE_FABRIC_SQL_DELEGATED_TOKEN || 'true').trim().toLowerCase() !== 'false'
@@ -49,15 +50,7 @@ export const fabricSqlScope = configuredFabricSqlScope
 
 // Default scopes include Graph permissions required for the communication scan.
 // Override by setting VITE_AAD_SCOPES as a comma-separated list in your .env.
-const defaultScopes = [
-  'openid',
-  'profile',
-  'offline_access',
-  'User.Read',
-  'Mail.Read',
-  'Chat.Read',
-  'Calendars.Read',
-].join(',')
+const defaultScopes = ['openid', 'profile', 'offline_access', 'User.Read'].join(',')
 
 const configuredScopes = (import.meta.env.VITE_AAD_SCOPES || defaultScopes)
   .split(',')

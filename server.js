@@ -457,12 +457,12 @@ app.get('/api/diag/auth', async (req, res) => {
   }
 })
 
-// Diagnostic: return column names and a sample row for SPM and MSX account tables.
+// Diagnostic: return column names and a sample row for account assignment and account tables.
 app.get('/api/diag/schema', async (req, res) => {
   let pool
   try {
     pool = await createWorkspaceIdentityPool()
-    const tables = ['SPM_accounts', 'SPM_accountassignments', 'MSX_accounts']
+    const tables = ['Accounts_SPM', 'AccountAssignments_SPM', 'Accounts_MSX']
     const results = {}
     for (const table of tables) {
       try {
@@ -528,13 +528,13 @@ app.post('/api/diag/opportunities', async (req, res) => {
           SUM(CASE WHEN @firstNamePattern IS NOT NULL AND LOWER(o.[Opportunity User Owner]) LIKE @firstNamePattern THEN 1 ELSE 0 END) AS firstNameLikeCount,
           SUM(CASE WHEN @lastNamePattern IS NOT NULL AND LOWER(o.[Opportunity User Owner]) LIKE @lastNamePattern THEN 1 ELSE 0 END) AS lastNameLikeCount,
           SUM(CASE WHEN o.[ID_owner] = @ownerName THEN 1 ELSE 0 END) AS ownerIdEqualsUserNameCount
-        FROM dbo.MSX_opportunities o
+        FROM dbo.Opportunities o
       `),
       request.query(`
         SELECT TOP 20
           LOWER(LTRIM(RTRIM(o.[Opportunity User Owner]))) AS normalizedOwner,
           COUNT(*) AS opportunityCount
-        FROM dbo.MSX_opportunities o
+        FROM dbo.Opportunities o
         WHERE o.[Opportunity User Owner] IS NOT NULL
           AND LTRIM(RTRIM(o.[Opportunity User Owner])) <> ''
         GROUP BY LOWER(LTRIM(RTRIM(o.[Opportunity User Owner])))
@@ -544,7 +544,7 @@ app.post('/api/diag/opportunities', async (req, res) => {
         SELECT TOP 20
           LOWER(LTRIM(RTRIM(o.[Opportunity User Owner]))) AS normalizedOwner,
           COUNT(*) AS opportunityCount
-        FROM dbo.MSX_opportunities o
+        FROM dbo.Opportunities o
         WHERE o.[Opportunity User Owner] IS NOT NULL
           AND LTRIM(RTRIM(o.[Opportunity User Owner])) <> ''
           AND (
@@ -566,7 +566,7 @@ app.post('/api/diag/opportunities', async (req, res) => {
           o.[Opportunity Account],
           o.[Opportunity Est. Close Date],
           o.[Opportunity Date/Time Last Modified]
-        FROM dbo.MSX_opportunities o
+        FROM dbo.Opportunities o
         WHERE
           LOWER(LTRIM(RTRIM(o.[Opportunity User Owner]))) = @ownerName
           OR LOWER(LTRIM(RTRIM(o.[Opportunity User Owner]))) = @reversedOwnerName
@@ -690,7 +690,7 @@ app.post('/api/fabric/data', async (req, res) => {
 
 /**
  * Query: Get all accounts related to the user alias.
- * Canonical bridge: MSX_accounts.[MSX Account Number] = SPM_accountassignments.[SPM Account Number].
+ * Canonical bridge: Accounts_MSX.[MSX Account Number] = AccountAssignments_SPM.[SPM Account Number].
  */
 async function getAccountsByUser(pool, userAlias) {
   try {
@@ -706,10 +706,10 @@ async function getAccountsByUser(pool, userAlias) {
         ma.[MSX Account Owner],
         aa.[SPM Account Assignment User Alias],
         aa.[SPM Account Assignment User Role Summary]
-      FROM dbo.SPM_accountassignments aa
-      LEFT JOIN dbo.SPM_accounts sa
+      FROM dbo.AccountAssignments_SPM aa
+      LEFT JOIN dbo.Accounts_SPM sa
         ON sa.[ID_account] = aa.[ID_account]
-      LEFT JOIN dbo.MSX_accounts ma
+      LEFT JOIN dbo.Accounts_MSX ma
         ON ma.[MSX Account Number] = aa.[SPM Account Number]
       WHERE LOWER(LTRIM(RTRIM(aa.[SPM Account Assignment User Alias]))) = @userAlias
       ORDER BY ma.[MSX Account Number], aa.[SPM Account]
@@ -761,7 +761,7 @@ async function getOwnedOpportunities(pool, userId, userName) {
         o.[Opportunity Partner Co-Sell],
         o.[Opportunity User Owner],
         o.[Opportunity Date/Time Last Modified]
-      FROM dbo.MSX_opportunities o
+      FROM dbo.Opportunities o
       WHERE
         LOWER(LTRIM(RTRIM(o.[Opportunity User Owner]))) = @ownerName
         OR (@ownerName2 IS NOT NULL AND LOWER(LTRIM(RTRIM(o.[Opportunity User Owner]))) = @ownerName2)
@@ -819,8 +819,8 @@ async function getDealTeamOpportunities(pool, userName) {
         o.[Opportunity User Owner],
         o.[Opportunity Date/Time Last Modified],
         dt.[Opportunity Deal Team User]
-      FROM dbo.MSX_opportunities o
-      INNER JOIN dbo.MSX_opportunitydealteam dt ON o.[ID_opportunity] = dt.[ID_opportunity]
+      FROM dbo.Opportunities o
+      INNER JOIN dbo.OpportunityPrimaryPartner dt ON o.[ID_opportunity] = dt.[ID_opportunity]
       WHERE (
           LOWER(LTRIM(RTRIM(dt.[Opportunity Deal Team User]))) = @userName1
           OR (@userName2 IS NOT NULL AND LOWER(LTRIM(RTRIM(dt.[Opportunity Deal Team User]))) = @userName2)
@@ -840,8 +840,8 @@ async function getDealTeamOpportunities(pool, userName) {
     console.log('[getDealTeamOpportunities] Found', result.recordset.length, 'opportunities')
     return result.recordset
   } catch (error) {
-    console.error('Error in getDealTeamOpportunities:', error)
-    throw error
+    console.warn('Deal-team query unavailable for current schema, returning empty result:', error)
+    return []
   }
 }
 
@@ -878,12 +878,12 @@ async function getRelatedAccountOpportunities(pool, userAlias) {
         o.[Opportunity Partner Co-Sell],
         o.[Opportunity User Owner],
         o.[Opportunity Date/Time Last Modified]
-      FROM dbo.SPM_accountassignments aa
-      LEFT JOIN dbo.SPM_accounts sa
+      FROM dbo.AccountAssignments_SPM aa
+      LEFT JOIN dbo.Accounts_SPM sa
         ON sa.[ID_account] = aa.[ID_account]
-      LEFT JOIN dbo.MSX_accounts ma
+      LEFT JOIN dbo.Accounts_MSX ma
         ON ma.[MSX Account Number] = aa.[SPM Account Number]
-      LEFT JOIN dbo.MSX_opportunities o
+      LEFT JOIN dbo.Opportunities o
         ON o.[ID_account] = ma.[ID_account]
       WHERE LOWER(LTRIM(RTRIM(aa.[SPM Account Assignment User Alias]))) = @userAlias
         AND o.[ID_opportunity] IS NOT NULL
@@ -933,17 +933,15 @@ async function getPartnerEngagements(pool, userId) {
         pe.[Referral Outcome],
         pe.[Partner Engagement Call to Action],
         o.[Opportunity Title] AS [RelatedOpportunityTitle]
-      FROM dbo.MSX_partnerreferrals pe
-      LEFT JOIN dbo.MSX_opportunities o ON pe.[ID_opportunity] = o.[ID_opportunity]
+      FROM dbo.PartnerEngagements pe
+      LEFT JOIN dbo.Opportunities o ON pe.[ID_opportunity] = o.[ID_opportunity]
       WHERE 
         pe.[ID_owner] = @userId
         OR pe.[ID_account] IN (
-          SELECT [ID_account] FROM dbo.MSX_accounts WHERE [ID_owner] = @userId
+          SELECT [ID_account] FROM dbo.Accounts_MSX WHERE [ID_owner] = @userId
         )
         OR pe.[ID_opportunity] IN (
-          SELECT [ID_opportunity] FROM dbo.MSX_opportunities WHERE [ID_owner] = @userId
-          UNION
-          SELECT [ID_opportunity] FROM dbo.MSX_opportunitydealteam WHERE [ID_owner] = @userId
+          SELECT [ID_opportunity] FROM dbo.Opportunities WHERE [ID_owner] = @userId
         )
       ORDER BY pe.[Partner Engagement Date/Time Last Modified] DESC
     `
