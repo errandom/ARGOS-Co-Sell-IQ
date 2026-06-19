@@ -39,7 +39,7 @@ const includeFabricSqlScopeInLogin =
     return false
   })()
 const enableFabricSqlDelegatedToken =
-  (import.meta.env.VITE_ENABLE_FABRIC_SQL_DELEGATED_TOKEN || 'true').trim().toLowerCase() !== 'false'
+  (import.meta.env.VITE_ENABLE_FABRIC_SQL_DELEGATED_TOKEN || 'false').trim().toLowerCase() === 'true'
 
 // Delegated interactive auth must use user_impersonation (not .default).
 export const fabricSqlScope = configuredFabricSqlScope
